@@ -1,4 +1,3 @@
 pandas
 openpyxl
 xlsxwriter
-pip install fpdf
