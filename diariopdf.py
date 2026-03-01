@@ -2,37 +2,36 @@ import streamlit as st
 import pandas as pd
 import io
 import re
-import base64
 
-st.set_page_config(page_title="Sistema Contable Pro", layout="wide")
+# Configuración de página
+st.set_page_config(page_title="Motor Contable Pro", layout="wide")
 
-st.title("⚖️ Libro Diario: Generación Dual (Excel + PDF)")
+st.title("⚖️ Libro Diario: Generación de Reportes A4")
 
 # --- ESTADOS DE SESIÓN ---
 if 'paso' not in st.session_state:
     st.session_state.paso = 'configuracion'
-if 'excel_final' not in st.session_state:
-    st.session_state.excel_final = None
+if 'excel_data' not in st.session_state:
+    st.session_state.excel_data = None
+if 'html_data' not in st.session_state:
+    st.session_state.html_data = None
 
-# --- VALIDACIÓN DE PERÍODO ---
+# --- FUNCIÓN VALIDACIÓN ---
 def validar_periodo(texto):
     patron = r"^(\d{2})/(\d{2})/(\d{4})\s*-\s*(\d{2})/(\d{2})/(\d{4})$"
     match = re.match(patron, texto)
-    if not match: return False, "Formato: dd/mm/aaaa - dd/mm/aaaa"
+    if not match: return False, "Formato requerido: dd/mm/aaaa - dd/mm/aaaa"
     v = match.groups()
     try:
-        if not (1 <= int(v[0]) <= 31) or not (1 <= int(v[3]) <= 31): return False, "Día inválido"
-        if not (1 <= int(v[1]) <= 12) or not (1 <= int(v[4]) <= 12): return False, "Mes inválido"
+        if not (1 <= int(v[0]) <= 31) or not (1 <= int(v[3]) <= 31): return False, "Día inválido (1-31)"
+        if not (1 <= int(v[1]) <= 12) or not (1 <= int(v[4]) <= 12): return False, "Mes inválido (1-12)"
         if not (1900 <= int(v[2]) <= 2050) or not (1900 <= int(v[5]) <= 2050): return False, "Año fuera de rango"
         return True, ""
-    except: return False, "Error numérico"
+    except: return False, "Error en formato numérico"
 
-archivo = st.file_uploader("Sube tu Libro Mayor", type=["xlsx", "xls"])
+archivo = st.file_uploader("1. Sube tu Libro Mayor (Excel)", type=["xlsx", "xls"])
 
 if archivo:
-    # Identificación automática de columnas por tu imagen
-    c_fec, c_cta, c_des, c_com, c_con, c_deb, c_cre = "Fecha", "Cuenta", "Descripción cuenta", "Comprobante", "Concepto pase", "Débitos", "Créditos"
-    
     st.markdown("---")
     col1, col2 = st.columns(2)
     with col1:
@@ -46,26 +45,30 @@ if archivo:
         if not es_valido: st.error(msg)
         else: periodo_ok = True
 
+    # --- LÓGICA DE BOTONES ---
     if st.session_state.paso == 'configuracion':
-        if st.button("🚀 Lanzar Generación (Excel + PDF)", disabled=not (empresa and periodo_ok)):
+        if st.button("🚀 Generar Libros (Excel y PDF)", disabled=not (empresa and periodo_ok)):
             st.session_state.paso = 'procesando'
             st.rerun()
-
-    elif st.session_state.paso == 'procesando':
+    else:
         st.button("⏳ Procesando con ahorro de papel...", disabled=True)
         
         try:
+            # Procesamiento de datos (Columnas según tu imagen)
             df = pd.read_excel(archivo)
+            c_fec, c_cta, c_des, c_com, c_con, c_deb, c_cre = "Fecha", "Cuenta", "Descripción cuenta", "Comprobante", "Concepto pase", "Débitos", "Créditos"
+            
             df[c_fec] = pd.to_datetime(df[c_fec], errors='coerce').ffill()
             df = df.dropna(subset=[c_fec])
             df['Ley_F'] = df.apply(lambda r: f"{str(r[c_con]) if pd.notna(r[c_con]) else ''} {str(r[c_com]) if pd.notna(r[c_com]) else ''}".strip(), axis=1)
-            for c in [c_deb, c_cre]: df[c] = pd.to_numeric(df[c].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
-            
+            for col in [c_deb, c_cre]:
+                df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
+
             # Identificador de Asiento
             df['ID'] = (df[c_fec].dt.strftime('%Y%m%d') + df['Ley_F']).ne((df[c_fec].dt.strftime('%Y%m%d') + df['Ley_F']).shift()).cumsum()
             
-            lista_ex = []
-            idx_asientos = []
+            lista_final = []
+            asientos_info = []
             curr_row = 1
             bloques = df['ID'].unique()
             prog = st.progress(0)
@@ -84,31 +87,31 @@ if archivo:
                     'Debe': sub[c_deb].values,
                     'Haber': sub[c_cre].values
                 })
-                idx_asientos.append({'start': curr_row, 'end': curr_row + n - 1, 'len': n})
-                lista_ex.append(df_b)
-                lista_ex.append(pd.DataFrame([["SEP"]*7], columns=df_b.columns))
+                asientos_info.append({'start': curr_row, 'end': curr_row + n - 1, 'len': n})
+                lista_final.append(df_b)
+                lista_final.append(pd.DataFrame([["SEP"]*7], columns=df_b.columns))
                 curr_row += n + 1
 
-            df_total = pd.concat(lista_ex, ignore_index=True)
+            df_total = pd.concat(lista_final, ignore_index=True)
 
-            # --- GENERAR EXCEL ---
+            # --- 1. GENERAR EXCEL CON MERGE ---
             buf_ex = io.BytesIO()
             with pd.ExcelWriter(buf_ex, engine='xlsxwriter') as writer:
                 df_total.to_excel(writer, index=False, sheet_name="Diario")
                 wb, ws = writer.book, writer.sheets['Diario']
                 
                 f_base = wb.add_format({'font_name': 'Arial', 'font_size': 7.5, 'valign': 'top'})
-                f_num = wb.add_format({'font_name': 'Arial', 'font_size': 7.5, 'num_format': '#,##0.00;;', 'valign': 'top'})
-                f_mrg = wb.add_format({'font_name': 'Arial', 'font_size': 7.5, 'valign': 'top', 'align': 'left', 'text_wrap': True})
-                f_sep = wb.add_format({'bg_color': '#000000'})
-                f_hdr = wb.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'font_size': 8})
+                f_num  = wb.add_format({'font_name': 'Arial', 'font_size': 7.5, 'num_format': '#,##0.00;;', 'valign': 'top'})
+                f_mrg  = wb.add_format({'font_name': 'Arial', 'font_size': 7.5, 'valign': 'top', 'align': 'left', 'text_wrap': True})
+                f_sep  = wb.add_format({'bg_color': '#000000'})
+                f_hdr  = wb.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'font_size': 8})
 
                 ws.set_paper(9); ws.set_margins(0.3, 0.3, 0.4, 0.4); ws.fit_to_pages(1, 0)
                 ws.set_header(f"&L&B{empresa} - {periodo}&R&BDIARIO GENERAL")
                 ws.set_column(0,0,8,f_base); ws.set_column(1,1,4,f_base); ws.set_column(2,2,30,f_base)
                 ws.set_column(3,3,7,f_base); ws.set_column(4,4,30,f_base); ws.set_column(5,6,11,f_num)
 
-                for item in idx_asientos:
+                for item in asientos_info:
                     if item['len'] >= 2:
                         s = item['start']
                         ws.merge_range(s, 0, s+1, 0, df_total.iloc[s-1]['Fecha'], f_mrg)
@@ -117,22 +120,23 @@ if archivo:
                     ws.set_row(item['end']+1, 1.2, f_sep)
                 for c_idx, val in enumerate(df_total.columns): ws.write(0, c_idx, val, f_hdr)
 
-            st.session_state.excel_final = buf_ex.getvalue()
-            
-            # --- GENERAR "PDF" (HTML Imprimible) ---
-            # Para evitar errores de librerías, generamos un HTML optimizado para imprimir
+            st.session_state.excel_data = buf_ex.getvalue()
+
+            # --- 2. GENERAR HTML (PARA PDF) ---
             html = f"""
             <html><head><style>
-                body {{ font-family: Arial; font-size: 8pt; margin: 1cm; }}
+                @page {{ size: A4; margin: 1cm; }}
+                body {{ font-family: Arial, sans-serif; font-size: 7.5pt; color: #333; }}
+                .header {{ display: flex; justify-content: space-between; font-weight: bold; border-bottom: 1px solid black; margin-bottom: 5px; font-size: 9pt; }}
                 table {{ width: 100%; border-collapse: collapse; table-layout: fixed; }}
-                th {{ background: #eee; border: 1px solid black; padding: 2px; font-size: 9pt; }}
-                td {{ border: 0.1pt solid #ccc; padding: 2px; vertical-align: top; overflow: hidden; }}
-                .sep {{ background: black; height: 2px; }}
-                .num {{ text-align: right; }}
-                .header {{ display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid black; }}
+                th {{ background: #eee; border: 0.5pt solid black; padding: 2px; font-size: 8pt; }}
+                td {{ border: 0.1pt solid #ddd; padding: 2px; vertical-align: top; overflow: hidden; }}
+                .sep {{ background: black; height: 2px; padding: 0; border: none; }}
+                .num {{ text-align: right; font-family: 'Courier New', monospace; }}
+                .merge {{ font-weight: bold; color: #000; }}
             </style></head><body>
                 <div class="header"><div>{empresa} - {periodo}</div><div>DIARIO GENERAL</div></div>
-                <table><thead><tr><th>Fecha</th><th>Nro</th><th>Leyenda</th><th>Cta</th><th>Descripción</th><th>Debe</th><th>Haber</th></tr></thead><tbody>
+                <table><thead><tr><th style="width:10%">Fecha</th><th style="width:5%">Nro</th><th style="width:25%">Leyenda</th><th style="width:8%">Cta</th><th style="width:28%">Descripción</th><th style="width:12%">Debe</th><th style="width:12%">Haber</th></tr></thead><tbody>
             """
             for _, r in df_total.iterrows():
                 if r['Fecha'] == "SEP":
@@ -140,25 +144,28 @@ if archivo:
                 else:
                     d = f"{r['Debe']:,.2f}" if r['Debe'] > 0 else ""
                     h = f"{r['Haber']:,.2f}" if r['Haber'] > 0 else ""
-                    html += f"<tr><td>{r['Fecha']}</td><td>{r['NRO.']}</td><td>{r['Leyenda']}</td><td>{r['Cuenta']}</td><td>{r['Descripción']}</td><td class="num">{d}</td><td class="num">{h}</td></tr>"
+                    html += f"<tr><td>{r['Fecha']}</td><td>{r['NRO.']}</td><td>{r['Leyenda']}</td><td>{r['Cuenta']}</td><td>{r['Descripción']}</td><td class='num'>{d}</td><td class='num'>{h}</td></tr>"
             html += "</tbody></table></body></html>"
             
-            st.session_state.pdf_html = html
+            st.session_state.html_data = html
             st.session_state.paso = 'listo'
             st.rerun()
 
         except Exception as e:
-            st.error(f"Error: {e}"); st.session_state.paso = 'configuracion'
+            st.error(f"Error técnico: {e}")
+            st.session_state.paso = 'configuracion'
 
-    if st.session_state.paso == 'listo':
-        st.success("✅ ¡Archivos listos!")
-        col_ex, col_pdf = st.columns(2)
-        with col_ex:
-            st.download_button("📥 Descargar Excel", st.session_state.excel_final, f"Diario_{empresa}.xlsx")
-        with col_pdf:
-            # Truco: El PDF se descarga como HTML que al abrirse en Chrome y darle a Imprimir -> Guardar como PDF queda perfecto.
-            st.download_button("📥 Descargar PDF (Formato Web)", st.session_state.pdf_html.encode('utf-8'), f"Diario_{empresa}.html", "text/html")
-            st.info("👆 Abre el archivo descargado y presiona Ctrl+P para guardarlo como PDF oficial.")
-        
-        if st.button("🏁 Finalizar"):
-            st.session_state.clear(); st.rerun()
+# --- INTERFAZ DE DESCARGA ---
+if st.session_state.paso == 'listo':
+    st.success("✅ ¡Libro Diario generado exitosamente!")
+    
+    col_dl1, col_dl2 = st.columns(2)
+    with col_dl1:
+        st.download_button("📥 Descargar Excel (Con Merge)", st.session_state.excel_data, f"Diario_{empresa}.xlsx")
+    with col_dl2:
+        st.download_button("📥 Descargar Reporte PDF (HTML)", st.session_state.html_data.encode('utf-8'), f"Diario_{empresa}.html", "text/html")
+        st.info("💡 **Instrucción para PDF:** Abre el archivo .html y presiona **Ctrl + P**. Elige 'Guardar como PDF'. Saldrá perfecto en A4.")
+
+    if st.button("🏁 Finalizar y Reiniciar"):
+        st.session_state.clear()
+        st.rerun()
