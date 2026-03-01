@@ -5,7 +5,7 @@ import io
 st.set_page_config(page_title="Motor Contable Pro", layout="wide")
 
 st.title("⚖️ Suite Contable: Libro Diario")
-st.markdown("Acabado: Línea divisoria de **2pt** y **autoajuste de ancho** de columnas.")
+st.markdown("Acabado: Línea divisoria de **2pt**, **autoajuste** y corrección de errores numéricos.")
 
 archivo = st.file_uploader("Sube tu Libro Mayor (Excel)", type=["xlsx", "xls"])
 
@@ -67,30 +67,31 @@ if archivo:
                 # 1. Formato de línea negra
                 formato_negro = workbook.add_format({'bg_color': '#000000'})
                 
-                # 2. AUTOAJUSTE DE COLUMNAS
-                # Recorremos cada columna para medir el contenido
+                # 2. AUTOAJUSTE DE COLUMNAS (Corregido para evitar el error de float)
                 for i, col in enumerate(df_exportar.columns):
-                    # Medimos el largo del nombre de la columna o del dato más largo
-                    max_len = max(
-                        df_exportar[col].astype(str).map(len).max(), 
-                        len(str(col))
-                    ) + 2  # Añadimos un pequeño margen
-                    worksheet.set_column(i, i, max_len)
+                    # Convertimos todo a string antes de medir la longitud
+                    # Usamos una lista de comprensión para evitar el error de len() en floats
+                    longitudes = [len(str(val)) for val in df_exportar[col].values]
+                    max_len = max(longitudes + [len(str(col))]) + 2
+                    
+                    # Limitamos el ancho máximo para que no se vuelva loco con textos gigantes
+                    ancho_final = min(max_len, 50) 
+                    worksheet.set_column(i, i, ancho_final)
 
                 # 3. APLICAR LÍNEA ULTRA FINA (2pt)
                 for row_num in range(len(df_exportar)):
                     if pd.isna(df_exportar.iloc[row_num][c_asiento]):
                         worksheet.set_row(row_num + 1, 2, formato_negro)
 
-            st.success("✅ ¡Perfeccionado! Columnas ajustadas y líneas de 2pt.")
+            st.success("✅ ¡Perfeccionado! Error corregido, columnas ajustadas y líneas de 2pt.")
             st.download_button(
                 label="📥 Descargar Libro Diario Final",
                 data=buf.getvalue(),
-                file_name="Libro_Diario_Perfecto.xlsx",
+                file_name="Libro_Diario_Pro.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
             st.error("No se encontraron las columnas clave de Fecha o Asiento.")
 
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error detectado: {e}")
