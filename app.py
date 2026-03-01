@@ -4,8 +4,8 @@ import io
 
 st.set_page_config(page_title="Motor Contable Pro", layout="wide")
 
-st.title("⚙️ Procesador Avanzado: Mayor a Diario")
-st.markdown("Ajuste Final: **Líneas negras ultra finas** (separadores de 4px).")
+st.title("⚖️ Suite Contable: Libro Diario")
+st.markdown("Acabado: Línea divisoria de **2pt** y **autoajuste de ancho** de columnas.")
 
 archivo = st.file_uploader("Sube tu Libro Mayor (Excel)", type=["xlsx", "xls"])
 
@@ -18,8 +18,8 @@ if archivo:
         mapeo = {
             'fecha': ['Fecha', 'Fec.', 'Fecha_Asiento', 'Date', 'FECHA', 'F. Contable'],
             'asiento': ['Asiento', 'Num_Asiento', 'Comprobante', 'Nro', 'ID', 'ASIENTO', 'Poliza', 'Referencia'],
-            'debe': ['Debe', 'Débito', 'Cargo', 'DEBE', 'Debit', 'Ingresos'],
-            'haber': ['Haber', 'Crédito', 'Abono', 'HABER', 'Credit', 'Egresos']
+            'debe': ['Debe', 'Débito', 'Cargo', 'DEBE', 'Debit'],
+            'haber': ['Haber', 'Crédito', 'Abono', 'HABER', 'Credit']
         }
         
         def detectar(lista, reales):
@@ -33,18 +33,18 @@ if archivo:
         c_haber = detectar(mapeo['haber'], cols)
 
         if c_fecha and c_asiento:
-            # Formato de fecha
+            # Formato de fecha y limpieza
             df[c_fecha] = pd.to_datetime(df[c_fecha], errors='coerce')
             df = df.dropna(subset=[c_fecha])
-            df[c_fecha] = df[c_fecha].dt.strftime('%d/%m/%Y')
             
-            # Limpieza de números
+            # Ordenar y convertir fecha a texto para el Excel
+            df_ordenado = df.sort_values(by=[c_fecha, c_asiento])
+            df_ordenado[c_fecha] = df_ordenado[c_fecha].dt.strftime('%d/%m/%Y')
+            
             if c_debe: df[c_debe] = pd.to_numeric(df[c_debe], errors='coerce').fillna(0)
             if c_haber: df[c_haber] = pd.to_numeric(df[c_haber], errors='coerce').fillna(0)
-            
-            df_ordenado = df.sort_values(by=[c_fecha, c_asiento])
 
-            # Construcción de la lista con filas marcadoras
+            # Construcción del DataFrame con filas vacías
             lista_final = []
             asientos_unicos = df_ordenado[c_asiento].unique()
             fila_separadora = pd.DataFrame([[None] * len(cols)], columns=cols)
@@ -56,7 +56,7 @@ if archivo:
 
             df_exportar = pd.concat(lista_final, ignore_index=True)
 
-            # --- GENERACIÓN DEL EXCEL CON LÍNEA ULTRA FINA ---
+            # --- GENERACIÓN DE EXCEL CON DISEÑO ---
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
                 df_exportar.to_excel(writer, index=False, sheet_name="Libro Diario")
@@ -64,25 +64,33 @@ if archivo:
                 workbook  = writer.book
                 worksheet = writer.sheets['Libro Diario']
                 
-                # Formato negro sólido
+                # 1. Formato de línea negra
                 formato_negro = workbook.add_format({'bg_color': '#000000'})
                 
-                for row_num in range(len(df_exportar)):
-                    # Buscamos nuestra fila marcadora (donde el asiento es nulo)
-                    if pd.isna(df_exportar.iloc[row_num][c_asiento]):
-                        # worksheet.set_row(fila, altura, formato)
-                        # Usamos altura 4 para que sea la mitad de fina que antes
-                        worksheet.set_row(row_num + 1, 4, formato_negro)
+                # 2. AUTOAJUSTE DE COLUMNAS
+                # Recorremos cada columna para medir el contenido
+                for i, col in enumerate(df_exportar.columns):
+                    # Medimos el largo del nombre de la columna o del dato más largo
+                    max_len = max(
+                        df_exportar[col].astype(str).map(len).max(), 
+                        len(str(col))
+                    ) + 2  # Añadimos un pequeño margen
+                    worksheet.set_column(i, i, max_len)
 
-            st.success("✅ ¡Hecho! Las líneas ahora son ultra finas.")
+                # 3. APLICAR LÍNEA ULTRA FINA (2pt)
+                for row_num in range(len(df_exportar)):
+                    if pd.isna(df_exportar.iloc[row_num][c_asiento]):
+                        worksheet.set_row(row_num + 1, 2, formato_negro)
+
+            st.success("✅ ¡Perfeccionado! Columnas ajustadas y líneas de 2pt.")
             st.download_button(
-                label="📥 Descargar con Líneas Ultra Finas",
+                label="📥 Descargar Libro Diario Final",
                 data=buf.getvalue(),
-                file_name="Diario_Final_Elegante.xlsx",
+                file_name="Libro_Diario_Perfecto.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.error("Columnas clave no encontradas.")
+            st.error("No se encontraron las columnas clave de Fecha o Asiento.")
 
     except Exception as e:
         st.error(f"Error: {e}")
