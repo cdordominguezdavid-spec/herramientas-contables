@@ -4,27 +4,27 @@ import io
 
 st.set_page_config(page_title="Motor Contable Pro", layout="wide")
 
-st.title("⚖️ Libro Diario: Edición Final de Impresión")
+st.title("⚖️ Libro Diario: Formato de Impresión A4")
 
 archivo = st.file_uploader("1. Sube tu Libro Mayor (Excel)", type=["xlsx", "xls"])
 
 if archivo:
     st.markdown("---")
-    st.subheader("2. Datos de Cabecera para Impresión")
+    st.subheader("2. Datos de Cabecera")
     
     col_inp1, col_inp2 = st.columns(2)
     with col_inp1:
         empresa = st.text_input("Nombre de la Empresa:", placeholder="Ej: Mi Empresa S.A.")
     with col_inp2:
-        periodo = st.text_input("Período del Reporte:", placeholder="Ej: Enero 2026")
+        periodo = st.text_input("Período del Reporte:", placeholder="Ej: Marzo 2026")
 
-    if st.button("🚀 Generar y Establecer Zona de Impresión"):
+    if st.button("🚀 Generar Excel con Área de Impresión"):
         if empresa and periodo:
             try:
                 df = pd.read_excel(archivo)
                 df = df.dropna(how='all')
                 
-                # Columnas de origen según tu formato
+                # Nombres de columnas de tu archivo
                 c_fecha, c_cta, c_desc_cta, c_comp, c_conc, c_debe_orig, c_haber_orig = \
                     "Fecha", "Cuenta", "Descripción cuenta", "Comprobante", "Concepto pase", "Débitos", "Créditos"
 
@@ -41,7 +41,7 @@ if archivo:
                     df['Fecha_Aux'] = df[c_fecha].dt.strftime('%d/%m/%Y')
                     df['Bloque'] = (df['Fecha_Aux'] + df['Leyenda_Full']).ne((df['Fecha_Aux'] + df['Leyenda_Full']).shift()).cumsum()
                     
-                    # 2. Estructura para Excel
+                    # 2. Estructura de Filas
                     lista_final = []
                     asientos_indices = []
                     bloques = df['Bloque'].unique()
@@ -68,73 +68,71 @@ if archivo:
 
                     df_to_excel = pd.concat(lista_final, ignore_index=True)
 
-                    # 3. Generación del Archivo Excel con Parámetros de Impresión
+                    # 3. Generación del Excel
                     buf = io.BytesIO()
                     with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
                         df_to_excel.to_excel(writer, index=False, sheet_name="Libro Diario")
                         workbook  = writer.book
                         worksheet = writer.sheets['Libro Diario']
                         
-                        # FORMATOS
-                        f_miles = workbook.add_format({'num_format': '#,##0.00;;', 'font_name': 'Arial', 'font_size': 8.5, 'valign': 'top'})
-                        f_text  = workbook.add_format({'font_name': 'Arial', 'font_size': 8.5, 'valign': 'top', 'text_wrap': True})
-                        f_merge = workbook.add_format({'font_name': 'Arial', 'font_size': 8.5, 'valign': 'top', 'align': 'left', 'text_wrap': True})
+                        # FORMATOS (Ceros vacíos con #,##0.00;;)
+                        f_miles = workbook.add_format({'num_format': '#,##0.00;;', 'font_name': 'Arial', 'font_size': 9, 'valign': 'top'})
+                        f_text  = workbook.add_format({'font_name': 'Arial', 'font_size': 9, 'valign': 'top', 'text_wrap': True})
+                        f_merge = workbook.add_format({'font_name': 'Arial', 'font_size': 9, 'valign': 'top', 'align': 'left', 'text_wrap': True})
                         f_negro = workbook.add_format({'bg_color': '#000000'})
                         f_head  = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'align': 'center', 'font_size': 9})
 
-                        # --- CONFIGURACIÓN TÉCNICA DE IMPRESIÓN ---
-                        worksheet.set_paper(9) # Papel A4
-                        # Márgenes de 0,5 cm (aprox 0.2 pulgadas)
-                        worksheet.set_margins(left=0.2, right=0.2, top=0.5, bottom=0.5)
+                        # --- CONFIGURACIÓN DE IMPRESIÓN ---
+                        worksheet.set_paper(9) # A4
+                        
+                        # Márgenes exactos de 0.5 cm (aprox 0.2 pulgadas en Excel)
+                        m_val = 0.2 
+                        worksheet.set_margins(left=m_val, right=m_val, top=0.5, bottom=0.5)
+                        
                         worksheet.center_horizontally()
+                        worksheet.fit_to_pages(1, 0) # Ajustar a 1 página de ancho
                         
-                        # Forzar ajuste a 1 página de ancho
-                        worksheet.fit_to_pages(1, 0) # (Ancho, Alto: 0 significa automático)
-                        
-                        # Establecer Zona de Impresión (Desde A1 hasta la última celda con datos)
+                        # Establecer Área de Impresión
                         last_row = len(df_to_excel)
                         worksheet.print_area(0, 0, last_row, 6)
                         
-                        # Repetir encabezados en cada hoja (Fila 1)
+                        # Repetir encabezados en cada hoja
                         worksheet.repeat_rows(0)
-                        
-                        # Activar Vista "Diseño de Página" (Vista Preliminar)
-                        worksheet.set_view('page_layout')
 
-                        # Encabezados y Pies de página con numeración
+                        # Encabezado y Pie de página
                         worksheet.set_header(f"&L&B{empresa}\nPeríodo: {periodo}&R&BDIARIO GENERAL")
                         worksheet.set_footer("&RPágina &P de &N")
 
-                        # Anchos de columna optimizados para A4 (Total aprox 100-105)
-                        worksheet.set_column(0, 0, 9, f_text)   # Fecha
-                        worksheet.set_column(1, 1, 4.5, f_text) # NRO.
-                        worksheet.set_column(2, 2, 33, f_text)  # Leyenda
+                        # Anchos de columna
+                        worksheet.set_column(0, 0, 10, f_text)  # Fecha
+                        worksheet.set_column(1, 1, 5, f_text)   # NRO.
+                        worksheet.set_column(2, 2, 35, f_text)  # Leyenda
                         worksheet.set_column(3, 3, 7, f_text)   # Cuenta
-                        worksheet.set_column(4, 4, 33, f_text)  # Descripción
-                        worksheet.set_column(5, 6, 12, f_miles) # Debe / Haber
+                        worksheet.set_column(4, 4, 35, f_text)  # Descripción
+                        worksheet.set_column(5, 6, 13, f_miles) # Debe / Haber
 
-                        # Lógica de Merges y Líneas Divisorias
+                        # Merges y Líneas Divisorias
                         for idx in asientos_indices:
                             if idx['len'] >= 2:
                                 t_leyenda = df_to_excel.iloc[idx['start']-1]['Leyenda']
                                 worksheet.merge_range(idx['start'], 2, idx['start'] + 1, 2, t_leyenda, f_merge)
                             
                             row_negra = idx['end'] + 1
-                            worksheet.set_row(row_negra, 1.2, f_negro) # Línea ultra fina
+                            worksheet.set_row(row_negra, 1.5, f_negro) # Línea de 2pts
                             for c in range(7): worksheet.write(row_negra, c, "", f_negro)
 
-                        # Escribir encabezados de columna
+                        # Escribir encabezados
                         for col_num, value in enumerate(df_to_excel.columns.values):
                             worksheet.write(0, col_num, value, f_head)
 
-                    st.success("✅ ¡Zona de impresión y vista preliminar configuradas!")
+                    st.success("✅ ¡Reporte generado con área de impresión configurada!")
                     st.download_button(
-                        label="📥 Descargar Diario Listo para Imprimir",
+                        label="📥 Descargar Diario Final",
                         data=buf.getvalue(),
-                        file_name=f"Diario_Oficial_{empresa.replace(' ', '_')}.xlsx",
+                        file_name=f"Diario_{empresa.replace(' ', '_')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"Error técnico: {e}")
         else:
-            st.warning("⚠️ Completa Empresa y Período.")
+            st.warning("⚠️ Completa los datos de cabecera.")
