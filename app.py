@@ -2,11 +2,10 @@ import streamlit as st
 import pandas as pd
 import io
 
-# Configuración
 st.set_page_config(page_title="Motor Contable Pro", layout="wide")
 
 st.title("⚙️ Procesador Avanzado: Mayor a Diario")
-st.markdown("Ajuste: Forzando **Líneas Negras** sólidas entre asientos.")
+st.markdown("Ajuste Final: **Líneas negras ultra finas** (separadores de 4px).")
 
 archivo = st.file_uploader("Sube tu Libro Mayor (Excel)", type=["xlsx", "xls"])
 
@@ -16,7 +15,6 @@ if archivo:
         df = df.dropna(how='all')
         
         cols = df.columns.tolist()
-        # Mapeo de columnas (mismo que antes)
         mapeo = {
             'fecha': ['Fecha', 'Fec.', 'Fecha_Asiento', 'Date', 'FECHA', 'F. Contable'],
             'asiento': ['Asiento', 'Num_Asiento', 'Comprobante', 'Nro', 'ID', 'ASIENTO', 'Poliza', 'Referencia'],
@@ -35,7 +33,7 @@ if archivo:
         c_haber = detectar(mapeo['haber'], cols)
 
         if c_fecha and c_asiento:
-            # Formato de fecha español
+            # Formato de fecha
             df[c_fecha] = pd.to_datetime(df[c_fecha], errors='coerce')
             df = df.dropna(subset=[c_fecha])
             df[c_fecha] = df[c_fecha].dt.strftime('%d/%m/%Y')
@@ -46,11 +44,9 @@ if archivo:
             
             df_ordenado = df.sort_values(by=[c_fecha, c_asiento])
 
-            # --- CONSTRUCCIÓN DEL DIARIO CON SEPARADORES ---
+            # Construcción de la lista con filas marcadoras
             lista_final = []
             asientos_unicos = df_ordenado[c_asiento].unique()
-            
-            # Fila "separadora" (la usaremos como marcador)
             fila_separadora = pd.DataFrame([[None] * len(cols)], columns=cols)
 
             for asiento in asientos_unicos:
@@ -60,35 +56,33 @@ if archivo:
 
             df_exportar = pd.concat(lista_final, ignore_index=True)
 
-            # --- GENERACIÓN DEL EXCEL CON FORMATO FORZADO ---
+            # --- GENERACIÓN DEL EXCEL CON LÍNEA ULTRA FINA ---
             buf = io.BytesIO()
-            # IMPORTANTE: Usamos engine='xlsxwriter'
             with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
                 df_exportar.to_excel(writer, index=False, sheet_name="Libro Diario")
                 
                 workbook  = writer.book
                 worksheet = writer.sheets['Libro Diario']
                 
-                # Definimos el formato negro sólido
-                formato_negro = workbook.add_format({'bg_color': '#000000', 'bottom': 1, 'top': 1})
+                # Formato negro sólido
+                formato_negro = workbook.add_format({'bg_color': '#000000'})
                 
-                # Recorremos el DataFrame para encontrar dónde pusimos los "None" y pintarlos
                 for row_num in range(len(df_exportar)):
-                    # Si el valor en la columna de Asiento es nulo, es nuestra fila separadora
+                    # Buscamos nuestra fila marcadora (donde el asiento es nulo)
                     if pd.isna(df_exportar.iloc[row_num][c_asiento]):
-                        # Pintamos toda la fila (desde columna 0 hasta la última)
-                        # row_num + 1 porque la fila 0 es el encabezado en Excel
-                        worksheet.set_row(row_num + 1, 8, formato_negro) # 8 es la altura (más delgada)
+                        # worksheet.set_row(fila, altura, formato)
+                        # Usamos altura 4 para que sea la mitad de fina que antes
+                        worksheet.set_row(row_num + 1, 4, formato_negro)
 
-            st.success("✅ Procesado. Revisa el archivo descargado.")
+            st.success("✅ ¡Hecho! Las líneas ahora son ultra finas.")
             st.download_button(
-                label="📥 Descargar con Separadores Negros",
+                label="📥 Descargar con Líneas Ultra Finas",
                 data=buf.getvalue(),
-                file_name="Diario_Con_Lineas.xlsx",
+                file_name="Diario_Final_Elegante.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.error("No se detectaron columnas clave.")
+            st.error("Columnas clave no encontradas.")
 
     except Exception as e:
-        st.error(f"Error técnico: {e}")
+        st.error(f"Error: {e}")
