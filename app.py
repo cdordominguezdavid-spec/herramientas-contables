@@ -5,7 +5,7 @@ import io
 st.set_page_config(page_title="Motor Contable Pro", layout="wide")
 
 st.title("⚖️ Suite Contable: Libro Diario")
-st.markdown("Ajustes: **Fecha en Columna A**, **Sin repetición** y **Formato de Miles**.")
+st.markdown("Estado: **Fecha en Columna A**, **Miles con punto** y **Fecha única por asiento**.")
 
 archivo = st.file_uploader("Sube tu Libro Mayor (Excel)", type=["xlsx", "xls"])
 
@@ -16,10 +16,10 @@ if archivo:
         
         cols = df.columns.tolist()
         mapeo = {
-            'fecha': ['Fecha', 'Fec.', 'Fecha_Asiento', 'Date', 'FECHA', 'F. Contable'],
-            'asiento': ['Asiento', 'Num_Asiento', 'Comprobante', 'Nro', 'ID', 'ASIENTO', 'Poliza', 'Referencia'],
-            'debe': ['Debe', 'Débito', 'Cargo', 'DEBE', 'Debit'],
-            'haber': ['Haber', 'Crédito', 'Abono', 'HABER', 'Credit']
+            'fecha': ['Fecha', 'Fec.', 'Fecha_Asiento', 'Date', 'FECHA'],
+            'asiento': ['Asiento', 'Comprobante', 'Num_Asiento', 'Poliza', 'Referencia', 'ASIENTO'],
+            'debe': ['Débitos', 'Debe', 'Débito', 'Cargo', 'DEBE'],
+            'haber': ['Créditos', 'Haber', 'Crédito', 'Abono', 'HABER']
         }
         
         def detectar(lista, reales):
@@ -33,76 +33,75 @@ if archivo:
         c_haber = detectar(mapeo['haber'], cols)
 
         if c_fecha and c_asiento:
-            # Procesamiento de fechas
+            # 1. Limpieza de Fechas
             df[c_fecha] = pd.to_datetime(df[c_fecha], errors='coerce')
             df = df.dropna(subset=[c_fecha])
-            
-            # Ordenar
             df_ordenado = df.sort_values(by=[c_fecha, c_asiento])
             
-            # --- AJUSTE: MOVER FECHA A LA PRIMERA COLUMNA ---
-            columnas_reordenadas = [c_fecha] + [c for c in df_ordenado.columns if c != c_fecha]
-            df_ordenado = df_ordenado[columnas_reordenadas]
-            
-            # --- AJUSTE: FECHA ÚNICA POR ASIENTO ---
-            # Guardamos la fecha original en texto
-            df_ordenado[c_fecha] = df_ordenado[c_fecha].dt.strftime('%d/%m/%Y')
-            # Si el número de asiento se repite, vaciamos la celda de la fecha
-            df_ordenado.loc[df_ordenado[c_asiento].duplicated(), c_fecha] = ""
+            # 2. Reordenar: Fecha siempre primero
+            cols_reordenadas = [c_fecha] + [c for c in df_ordenado.columns if c != c_fecha]
+            df_ordenado = df_ordenado[cols_reordenadas]
 
-            # Asegurar que debe y haber sean números
-            if c_debe: df_ordenado[c_debe] = pd.to_numeric(df_ordenado[c_debe], errors='coerce').fillna(0)
-            if c_haber: df_ordenado[c_haber] = pd.to_numeric(df_ordenado[c_haber], errors='coerce').fillna(0)
+            # 3. Limpieza de Números (Forzar conversión para que Excel los reconozca como cifra)
+            for col_num in [c_debe, c_haber]:
+                if col_num:
+                    # Reemplazamos coma por punto si viene como texto y convertimos a número
+                    df_ordenado[col_num] = df_ordenado[col_num].astype(str).str.replace(',', '.')
+                    df_ordenado[col_num] = pd.to_numeric(df_ordenado[col_num], errors='coerce').fillna(0)
 
-            # Construcción con fila separadora
+            # 4. Fecha única por asiento (estética)
+            df_final_procesado = df_ordenado.copy()
+            df_final_procesado[c_fecha] = df_final_procesado[c_fecha].dt.strftime('%d/%m/%Y')
+            df_final_procesado.loc[df_final_procesado[c_asiento].duplicated(), c_fecha] = ""
+
+            # 5. Construcción de filas con separadores
             lista_final = []
-            asientos_unicos = df_ordenado[c_asiento].unique()
-            fila_separadora = pd.DataFrame([[" "] * len(df_ordenado.columns)], columns=df_ordenado.columns)
+            asientos_unicos = df_final_procesado[c_asiento].unique()
+            fila_separadora = pd.DataFrame([[" "] * len(df_final_procesado.columns)], columns=df_final_procesado.columns)
 
             for asiento in asientos_unicos:
-                filas_asiento = df_ordenado[df_ordenado[c_asiento] == asiento]
-                lista_final.append(filas_asiento)
+                filas = df_final_procesado[df_final_procesado[c_asiento] == asiento]
+                lista_final.append(filas)
                 lista_final.append(fila_separadora)
 
             df_exportar = pd.concat(lista_final, ignore_index=True)
 
+            # 6. Generación del Excel con formato de miles forzado
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
                 df_exportar.to_excel(writer, index=False, sheet_name="Libro Diario")
-                
                 workbook  = writer.book
                 worksheet = writer.sheets['Libro Diario']
                 
-                # --- AJUSTE: FORMATO DE MILES Y DECIMALES ---
-                # Este formato obliga a Excel a poner separador de miles y 2 decimales
-                formato_contable = workbook.add_format({'num_format': '#,##0.00'})
-                formato_negro = workbook.add_format({'bg_color': '#000000', 'border': 1, 'border_color': '#000000'})
-                
-                # Autoajuste de columnas y aplicación de formato
+                # FORMATO CONTABLE: #.##0,00
+                formato_miles = workbook.add_format({'num_format': '#,##0.00'})
+                formato_negro = workbook.add_format({'bg_color': '#000000'})
+
                 for i, col in enumerate(df_exportar.columns):
+                    # Autoajuste de columnas
                     longitudes = [len(str(val)) for val in df_exportar[col].values]
                     max_len = max(longitudes + [len(str(col))]) + 2
                     
-                    # Aplicar formato contable a las columnas de dinero
                     if col in [c_debe, c_haber]:
-                        worksheet.set_column(i, i, max_len, formato_contable)
+                        # Aplicamos el formato de miles específicamente a estas columnas
+                        worksheet.set_column(i, i, max_len, formato_miles)
                     else:
                         worksheet.set_column(i, i, min(max_len, 50))
 
-                # Línea divisoria de 2pt
+                # Línea negra de 2pt
                 for row_num in range(len(df_exportar)):
                     if df_exportar.iloc[row_num][c_asiento] == " ":
                         worksheet.set_row(row_num + 1, 2, formato_negro)
 
-            st.success("✅ ¡Hecho! Columna A es Fecha, miles configurados y sin repeticiones.")
+            st.success("✅ ¡Listo! Descarga el archivo y verifica los puntos de milésima.")
             st.download_button(
-                label="📥 Descargar Libro Diario Final",
+                label="📥 Descargar Diario Profesional",
                 data=buf.getvalue(),
-                file_name="Libro_Diario_Profesional.xlsx",
+                file_name="Diario_Profesional_Miles.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.error("No se detectaron columnas clave.")
+            st.error("No detecté las columnas. Asegúrate que se llamen Fecha, Comprobante/Asiento y Débitos/Créditos.")
 
     except Exception as e:
         st.error(f"Error: {e}")
