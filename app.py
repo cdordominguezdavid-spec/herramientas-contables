@@ -5,7 +5,7 @@ import io
 st.set_page_config(page_title="Motor Contable Pro", layout="wide")
 
 st.title("⚖️ Suite Contable: Libro Diario")
-st.markdown("Acabado: Línea divisoria de **2pt**, **autoajuste** y corrección de errores numéricos.")
+st.markdown("Ajuste: Forzando visibilidad de **Línea Divisoria (2pt)**.")
 
 archivo = st.file_uploader("Sube tu Libro Mayor (Excel)", type=["xlsx", "xls"])
 
@@ -29,25 +29,19 @@ if archivo:
 
         c_fecha = detectar(mapeo['fecha'], cols)
         c_asiento = detectar(mapeo['asiento'], cols)
-        c_debe = detectar(mapeo['debe'], cols)
-        c_haber = detectar(mapeo['haber'], cols)
 
         if c_fecha and c_asiento:
-            # Formato de fecha y limpieza
             df[c_fecha] = pd.to_datetime(df[c_fecha], errors='coerce')
             df = df.dropna(subset=[c_fecha])
             
-            # Ordenar y convertir fecha a texto para el Excel
             df_ordenado = df.sort_values(by=[c_fecha, c_asiento])
             df_ordenado[c_fecha] = df_ordenado[c_fecha].dt.strftime('%d/%m/%Y')
             
-            if c_debe: df[c_debe] = pd.to_numeric(df[c_debe], errors='coerce').fillna(0)
-            if c_haber: df[c_haber] = pd.to_numeric(df[c_haber], errors='coerce').fillna(0)
-
-            # Construcción del DataFrame con filas vacías
+            # --- CONSTRUCCIÓN CON FILA MARCADORA ---
             lista_final = []
             asientos_unicos = df_ordenado[c_asiento].unique()
-            fila_separadora = pd.DataFrame([[None] * len(cols)], columns=cols)
+            # Ponemos un espacio " " para que la fila no sea nula
+            fila_separadora = pd.DataFrame([[" "] * len(cols)], columns=cols)
 
             for asiento in asientos_unicos:
                 filas_asiento = df_ordenado[df_ordenado[c_asiento] == asiento]
@@ -56,7 +50,6 @@ if archivo:
 
             df_exportar = pd.concat(lista_final, ignore_index=True)
 
-            # --- GENERACIÓN DE EXCEL CON DISEÑO ---
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
                 df_exportar.to_excel(writer, index=False, sheet_name="Libro Diario")
@@ -64,34 +57,36 @@ if archivo:
                 workbook  = writer.book
                 worksheet = writer.sheets['Libro Diario']
                 
-                # 1. Formato de línea negra
-                formato_negro = workbook.add_format({'bg_color': '#000000'})
+                # FORMATO NEGRO FORZADO (Fondo + Borde)
+                formato_negro = workbook.add_format({
+                    'bg_color': '#000000',
+                    'border': 1,
+                    'border_color': '#000000'
+                })
                 
-                # 2. AUTOAJUSTE DE COLUMNAS (Corregido para evitar el error de float)
+                # Autoajuste de columnas
                 for i, col in enumerate(df_exportar.columns):
-                    # Convertimos todo a string antes de medir la longitud
-                    # Usamos una lista de comprensión para evitar el error de len() en floats
                     longitudes = [len(str(val)) for val in df_exportar[col].values]
                     max_len = max(longitudes + [len(str(col))]) + 2
-                    
-                    # Limitamos el ancho máximo para que no se vuelva loco con textos gigantes
-                    ancho_final = min(max_len, 50) 
-                    worksheet.set_column(i, i, ancho_final)
+                    worksheet.set_column(i, i, min(max_len, 50))
 
-                # 3. APLICAR LÍNEA ULTRA FINA (2pt)
+                # APLICAR LÍNEA (Usamos el marcador de espacio " ")
                 for row_num in range(len(df_exportar)):
-                    if pd.isna(df_exportar.iloc[row_num][c_asiento]):
+                    # Si la celda de la columna asiento tiene nuestro espacio separador
+                    valor_celda = df_exportar.iloc[row_num][c_asiento]
+                    if valor_celda == " ":
+                        # Forzamos altura 2 y el formato negro
                         worksheet.set_row(row_num + 1, 2, formato_negro)
 
-            st.success("✅ ¡Perfeccionado! Error corregido, columnas ajustadas y líneas de 2pt.")
+            st.success("✅ ¡Archivo generado! Las líneas ahora deben ser visibles.")
             st.download_button(
-                label="📥 Descargar Libro Diario Final",
+                label="📥 Descargar con Líneas de 2pt",
                 data=buf.getvalue(),
-                file_name="Libro_Diario_Pro.xlsx",
+                file_name="Diario_Final_V2.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.error("No se encontraron las columnas clave de Fecha o Asiento.")
+            st.error("No se detectaron columnas clave.")
 
     except Exception as e:
-        st.error(f"Error detectado: {e}")
+        st.error(f"Error: {e}")
