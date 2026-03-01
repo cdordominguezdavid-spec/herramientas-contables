@@ -1,49 +1,47 @@
+import streamlit as st
 import pandas as pd
-from tkinter import filedialog, Tk
-import os
+import io
 
-def seleccionar_y_convertir():
-    # 1. Crear una ventana oculta para que no moleste
-    root = Tk()
-    root.withdraw()
-    root.attributes("-topmost", True) # Pone la ventana al frente
+# Configuración visual
+st.set_page_config(page_title="Suite Contable", page_icon="📊")
 
-    print("📂 Selecciona tu archivo de Libro Mayor...")
-    
-    # 2. Abrir el explorador de archivos de Mac
-    ruta_archivo = filedialog.askopenfilename(
-        title="Selecciona el Libro Mayor (Excel)",
-        filetypes=[("Archivos de Excel", "*.xlsx *.xls")]
-    )
+st.title("📊 Convertidor: Libro Mayor a Diario")
+st.markdown("Sube tu archivo Excel del Libro Mayor para reordenarlo.")
 
-    if not ruta_archivo:
-        print("❌ No seleccionaste ningún archivo.")
-        return
+# Botón de subida de archivos (Versión Web)
+archivo_subido = st.file_uploader("Arrastra aquí tu Excel del Mayor", type=["xlsx", "xls"])
 
+if archivo_subido is not None:
     try:
-        # 3. Leer el archivo seleccionado
-        df = pd.read_excel(ruta_archivo)
-        print(f"✅ Archivo '{os.path.basename(ruta_archivo)}' cargado.")
+        # Leer el Excel
+        df = pd.read_excel(archivo_subido)
+        st.success("✅ Archivo cargado.")
+        
+        # Mostrar columnas para que el usuario verifique
+        st.write("Columnas encontradas:", df.columns.tolist())
+        
+        # Intentar ordenar (ajusta estos nombres si en tu Excel son distintos)
+        columnas_disponibles = df.columns.tolist()
+        criterio_orden = [c for c in ['Fecha', 'Asiento', 'Comprobante'] if c in columnas_disponibles]
+        
+        if criterio_orden:
+            df_resultado = df.sort_values(by=criterio_orden)
+            st.info(f"Ordenado por: {', '.join(criterio_orden)}")
+        else:
+            df_resultado = df
+            st.warning("⚠️ No se encontraron columnas 'Fecha' o 'Asiento' para ordenar automáticamente.")
 
-        # --- AQUÍ LA MAGIA DEL DIARIO ---
-        # Reordenamos por Fecha y luego por Asiento (asumiendo que esos nombres existen)
-        # Si tus columnas se llaman distinto, cámbialas aquí abajo:
-        columnas_orden = ['Fecha', 'Asiento'] 
+        # Botón para descargar el resultado
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            df_resultado.to_excel(writer, index=False)
         
-        # Verificamos si las columnas existen antes de ordenar
-        columnas_reales = [c for c in columnas_orden if c in df.columns]
-        df_diario = df.sort_values(by=columnas_reales)
-
-        # 4. Guardar el resultado en la misma carpeta
-        carpeta = os.path.dirname(ruta_archivo)
-        nombre_salida = os.path.join(carpeta, "Libro_Diario_Generado.xlsx")
-        
-        df_diario.to_excel(nombre_salida, index=False)
-        
-        print(f"🚀 ¡Éxito! El Libro Diario se guardó en:\n{nombre_salida}")
+        st.download_button(
+            label="📥 Descargar Libro Diario",
+            data=buffer.getvalue(),
+            file_name="Libro_Diario_Convertido.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
     except Exception as e:
-        print(f"⚠️ Error al procesar: {e}")
-
-if __name__ == "__main__":
-    seleccionar_y_convertir()
+        st.error(f"Ocurrió un error: {e}")
