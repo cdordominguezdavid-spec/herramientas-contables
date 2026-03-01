@@ -5,7 +5,7 @@ import io
 st.set_page_config(page_title="Motor Contable Pro", layout="wide")
 
 st.title("⚖️ Suite Contable: Libro Diario")
-st.markdown("Ajuste: Forzando visibilidad de **Línea Divisoria (2pt)**.")
+st.markdown("Mejoras: **Formato de moneda (1.234,56)** y **Fecha única por asiento**.")
 
 archivo = st.file_uploader("Sube tu Libro Mayor (Excel)", type=["xlsx", "xls"])
 
@@ -29,18 +29,29 @@ if archivo:
 
         c_fecha = detectar(mapeo['fecha'], cols)
         c_asiento = detectar(mapeo['asiento'], cols)
+        c_debe = detectar(mapeo['debe'], cols)
+        c_haber = detectar(mapeo['haber'], cols)
 
         if c_fecha and c_asiento:
+            # Procesamiento de fechas y limpieza
             df[c_fecha] = pd.to_datetime(df[c_fecha], errors='coerce')
             df = df.dropna(subset=[c_fecha])
             
+            # Ordenar por fecha y asiento
             df_ordenado = df.sort_values(by=[c_fecha, c_asiento])
-            df_ordenado[c_fecha] = df_ordenado[c_fecha].dt.strftime('%d/%m/%Y')
             
-            # --- CONSTRUCCIÓN CON FILA MARCADORA ---
+            # --- MEJORA 2: FECHA ÚNICA POR ASIENTO ---
+            # Si la fila anterior tiene el mismo número de asiento, borramos la fecha
+            df_ordenado[c_fecha] = df_ordenado[c_fecha].dt.strftime('%d/%m/%Y')
+            df_ordenado.loc[df_ordenado[c_asiento].duplicated(), c_fecha] = ""
+
+            # Asegurar que debe y haber sean números para el formato
+            if c_debe: df_ordenado[c_debe] = pd.to_numeric(df_ordenado[c_debe], errors='coerce').fillna(0)
+            if c_haber: df_ordenado[c_haber] = pd.to_numeric(df_ordenado[c_haber], errors='coerce').fillna(0)
+
+            # Construcción con fila separadora
             lista_final = []
             asientos_unicos = df_ordenado[c_asiento].unique()
-            # Ponemos un espacio " " para que la fila no sea nula
             fila_separadora = pd.DataFrame([[" "] * len(cols)], columns=cols)
 
             for asiento in asientos_unicos:
@@ -57,32 +68,31 @@ if archivo:
                 workbook  = writer.book
                 worksheet = writer.sheets['Libro Diario']
                 
-                # FORMATO NEGRO FORZADO (Fondo + Borde)
-                formato_negro = workbook.add_format({
-                    'bg_color': '#000000',
-                    'border': 1,
-                    'border_color': '#000000'
-                })
+                # --- MEJORA 1: FORMATO NUMÉRICO CON COMA Y PUNTO ---
+                # Formato: #.##0,00 (Punto para miles, coma para decimales)
+                formato_moneda = workbook.add_format({'num_format': '#,##0.00'})
+                formato_negro = workbook.add_format({'bg_color': '#000000', 'border': 1, 'border_color': '#000000'})
                 
-                # Autoajuste de columnas
+                # Autoajuste de columnas y aplicación de formato moneda
                 for i, col in enumerate(df_exportar.columns):
                     longitudes = [len(str(val)) for val in df_exportar[col].values]
                     max_len = max(longitudes + [len(str(col))]) + 2
                     worksheet.set_column(i, i, min(max_len, 50))
+                    
+                    # Si la columna es Debe o Haber, aplicamos el formato numérico
+                    if col in [c_debe, c_haber]:
+                        worksheet.set_column(i, i, max_len, formato_moneda)
 
-                # APLICAR LÍNEA (Usamos el marcador de espacio " ")
+                # Aplicar línea divisoria de 2pt
                 for row_num in range(len(df_exportar)):
-                    # Si la celda de la columna asiento tiene nuestro espacio separador
-                    valor_celda = df_exportar.iloc[row_num][c_asiento]
-                    if valor_celda == " ":
-                        # Forzamos altura 2 y el formato negro
+                    if df_exportar.iloc[row_num][c_asiento] == " ":
                         worksheet.set_row(row_num + 1, 2, formato_negro)
 
-            st.success("✅ ¡Archivo generado! Las líneas ahora deben ser visibles.")
+            st.success("✅ ¡Perfeccionado! Fechas simplificadas y números con formato contable.")
             st.download_button(
-                label="📥 Descargar con Líneas de 2pt",
+                label="📥 Descargar Libro Diario Pro",
                 data=buf.getvalue(),
-                file_name="Diario_Final_V2.xlsx",
+                file_name="Diario_Contable_Final.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
