@@ -5,7 +5,7 @@ import io
 st.set_page_config(page_title="Motor Contable Pro", layout="wide", page_icon="⚖️")
 
 st.title("⚙️ Procesador Avanzado: Mayor a Diario")
-st.markdown("Ahora con **separación automática** entre asientos para una mejor lectura.")
+st.markdown("Revisión: Fecha **DD/MM/AAAA** y **Separadores Negros** de asientos.")
 
 archivo = st.file_uploader("Sube tu Libro Mayor (Excel)", type=["xlsx", "xls"])
 
@@ -33,60 +33,65 @@ if archivo:
         c_haber = detectar(mapeo['haber'], cols)
 
         if c_fecha and c_asiento:
-            # Limpieza y formato
+            # --- 1. FORMATO DE FECHA ---
             df[c_fecha] = pd.to_datetime(df[c_fecha], errors='coerce')
             df = df.dropna(subset=[c_fecha])
             
             if c_debe: df[c_debe] = pd.to_numeric(df[c_debe], errors='coerce').fillna(0)
             if c_haber: df[c_haber] = pd.to_numeric(df[c_haber], errors='coerce').fillna(0)
             
-            # Cuadratura
-            total_d = df[c_debe].sum() if c_debe else 0
-            total_h = df[c_haber].sum() if c_haber else 0
-            dif = round(total_d - total_h, 2)
-
-            st.divider()
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Total DEBE", f"{total_d:,.2f}")
-            m2.metric("Total HABER", f"{total_h:,.2f}")
-            m3.metric("DIFERENCIA", f"{dif:,.2f}", delta=dif, delta_color="inverse")
-
-            # --- LÓGICA DE INTERLÍNEA ---
-            # Ordenamos primero
             df_ordenado = df.sort_values(by=[c_fecha, c_asiento])
+            # Formateamos la fecha para el Excel final
+            df_ordenado[c_fecha] = df_ordenado[c_fecha].dt.strftime('%d/%m/%Y')
+
+            # --- 2. LÓGICA DE SEPARACIÓN ---
+            lista_final = []
+            indices_separadores = []
+            asientos_unicos = df_ordenado[c_asiento].unique()
             
-            # Creamos una lista para almacenar las filas con espacios
-            lista_filas = []
-            asientos = df_ordenado[c_asiento].unique()
-            
-            for asiento in asientos:
-                # Extraemos las filas de este asiento específico
+            contador_filas = 0
+            for asiento in asientos_unicos:
                 filas_asiento = df_ordenado[df_ordenado[c_asiento] == asiento]
-                lista_filas.append(filas_asiento)
+                lista_final.append(filas_asiento)
+                contador_filas += len(filas_asiento)
                 
-                # Insertamos una fila vacía (Serie de NaNs)
+                # Creamos una fila vacía que luego pintaremos de negro
                 fila_vacia = pd.DataFrame([[None] * len(cols)], columns=cols)
-                lista_filas.append(fila_vacia)
-            
-            # Concatenamos todo de nuevo
-            df_final = pd.concat(lista_filas, ignore_index=True)
+                lista_final.append(fila_vacia)
+                
+                # Guardamos el índice de esta fila para pintarla después
+                indices_separadores.append(contador_filas)
+                contador_filas += 1 # Sumamos la fila vacía al contador
 
-            st.subheader("Vista Previa del Diario (con espacios)")
-            st.dataframe(df_final, use_container_width=True)
+            df_exportar = pd.concat(lista_final, ignore_index=True)
 
-            # Descarga
+            # --- 3. GENERAR EXCEL CON FORMATO (Línea Negra) ---
             buf = io.BytesIO()
-            with pd.ExcelWriter(buf, engine='openpyxl') as writer:
-                df_final.to_excel(writer, index=False, sheet_name="Libro Diario")
-            
+            # Usamos xlsxwriter como motor para poder dar formato
+            with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+                df_exportar.to_excel(writer, index=False, sheet_name="Libro Diario")
+                
+                workbook  = writer.book
+                worksheet = writer.sheets['Libro Diario']
+                
+                # Definimos el formato negro
+                formato_negro = workbook.add_format({'bg_color': '#000000'})
+                
+                # Pintamos las filas de los separadores
+                for fila_idx in indices_separadores:
+                    # Pintamos desde la columna A hasta la última columna con datos
+                    # fila_idx + 1 porque Excel cuenta desde 1 y tiene encabezados
+                    worksheet.set_row(fila_idx + 1, None, formato_negro)
+
+            st.success("✅ ¡Procesado con éxito!")
             st.download_button(
-                label="📥 Descargar Diario con Interlíneas",
+                label="📥 Descargar Diario con Líneas Negras",
                 data=buf.getvalue(),
-                file_name="Diario_con_Espacios.xlsx",
+                file_name="Diario_Profesional.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.error(f"❌ No se identificaron columnas clave. Columnas: {cols}")
+            st.error("No se detectaron columnas clave.")
 
     except Exception as e:
         st.error(f"Error: {e}")
