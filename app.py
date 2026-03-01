@@ -2,46 +2,91 @@ import streamlit as st
 import pandas as pd
 import io
 
-# Configuración visual
-st.set_page_config(page_title="Suite Contable", page_icon="📊")
+st.set_page_config(page_title="Motor Contable Pro", layout="wide", page_icon="⚖️")
 
-st.title("📊 Convertidor: Libro Mayor a Diario")
-st.markdown("Sube tu archivo Excel del Libro Mayor para reordenarlo.")
+st.title("⚙️ Procesador Avanzado: Mayor a Diario")
+st.markdown("Ahora con **separación automática** entre asientos para una mejor lectura.")
 
-# Botón de subida de archivos (Versión Web)
-archivo_subido = st.file_uploader("Arrastra aquí tu Excel del Mayor", type=["xlsx", "xls"])
+archivo = st.file_uploader("Sube tu Libro Mayor (Excel)", type=["xlsx", "xls"])
 
-if archivo_subido is not None:
+if archivo:
     try:
-        # Leer el Excel
-        df = pd.read_excel(archivo_subido)
-        st.success("✅ Archivo cargado.")
+        df = pd.read_excel(archivo)
+        df = df.dropna(how='all')
         
-        # Mostrar columnas para que el usuario verifique
-        st.write("Columnas encontradas:", df.columns.tolist())
+        cols = df.columns.tolist()
+        mapeo = {
+            'fecha': ['Fecha', 'Fec.', 'Fecha_Asiento', 'Date', 'FECHA', 'F. Contable'],
+            'asiento': ['Asiento', 'Num_Asiento', 'Comprobante', 'Nro', 'ID', 'ASIENTO', 'Poliza', 'Referencia'],
+            'debe': ['Debe', 'Débito', 'Cargo', 'DEBE', 'Debit', 'Ingresos'],
+            'haber': ['Haber', 'Crédito', 'Abono', 'HABER', 'Credit', 'Egresos']
+        }
         
-        # Intentar ordenar (ajusta estos nombres si en tu Excel son distintos)
-        columnas_disponibles = df.columns.tolist()
-        criterio_orden = [c for c in ['Fecha', 'Asiento', 'Comprobante'] if c in columnas_disponibles]
-        
-        if criterio_orden:
-            df_resultado = df.sort_values(by=criterio_orden)
-            st.info(f"Ordenado por: {', '.join(criterio_orden)}")
-        else:
-            df_resultado = df
-            st.warning("⚠️ No se encontraron columnas 'Fecha' o 'Asiento' para ordenar automáticamente.")
+        def detectar(lista_sinonimos, reales):
+            for s in lista_sinonimos:
+                if s in reales: return s
+            return None
 
-        # Botón para descargar el resultado
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df_resultado.to_excel(writer, index=False)
-        
-        st.download_button(
-            label="📥 Descargar Libro Diario",
-            data=buffer.getvalue(),
-            file_name="Libro_Diario_Convertido.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        c_fecha = detectar(mapeo['fecha'], cols)
+        c_asiento = detectar(mapeo['asiento'], cols)
+        c_debe = detectar(mapeo['debe'], cols)
+        c_haber = detectar(mapeo['haber'], cols)
+
+        if c_fecha and c_asiento:
+            # Limpieza y formato
+            df[c_fecha] = pd.to_datetime(df[c_fecha], errors='coerce')
+            df = df.dropna(subset=[c_fecha])
+            
+            if c_debe: df[c_debe] = pd.to_numeric(df[c_debe], errors='coerce').fillna(0)
+            if c_haber: df[c_haber] = pd.to_numeric(df[c_haber], errors='coerce').fillna(0)
+            
+            # Cuadratura
+            total_d = df[c_debe].sum() if c_debe else 0
+            total_h = df[c_haber].sum() if c_haber else 0
+            dif = round(total_d - total_h, 2)
+
+            st.divider()
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total DEBE", f"{total_d:,.2f}")
+            m2.metric("Total HABER", f"{total_h:,.2f}")
+            m3.metric("DIFERENCIA", f"{dif:,.2f}", delta=dif, delta_color="inverse")
+
+            # --- LÓGICA DE INTERLÍNEA ---
+            # Ordenamos primero
+            df_ordenado = df.sort_values(by=[c_fecha, c_asiento])
+            
+            # Creamos una lista para almacenar las filas con espacios
+            lista_filas = []
+            asientos = df_ordenado[c_asiento].unique()
+            
+            for asiento in asientos:
+                # Extraemos las filas de este asiento específico
+                filas_asiento = df_ordenado[df_ordenado[c_asiento] == asiento]
+                lista_filas.append(filas_asiento)
+                
+                # Insertamos una fila vacía (Serie de NaNs)
+                fila_vacia = pd.DataFrame([[None] * len(cols)], columns=cols)
+                lista_filas.append(fila_vacia)
+            
+            # Concatenamos todo de nuevo
+            df_final = pd.concat(lista_filas, ignore_index=True)
+
+            st.subheader("Vista Previa del Diario (con espacios)")
+            st.dataframe(df_final, use_container_width=True)
+
+            # Descarga
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+                df_final.to_excel(writer, index=False, sheet_name="Libro Diario")
+            
+            st.download_button(
+                label="📥 Descargar Diario con Interlíneas",
+                data=buf.getvalue(),
+                file_name="Diario_con_Espacios.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.error(f"❌ No se identificaron columnas clave. Columnas: {cols}")
 
     except Exception as e:
-        st.error(f"Ocurrió un error: {e}")
+        st.error(f"Error: {e}")
