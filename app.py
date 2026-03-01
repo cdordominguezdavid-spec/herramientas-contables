@@ -5,7 +5,7 @@ import io
 st.set_page_config(page_title="Motor Contable Pro", layout="wide")
 
 st.title("⚖️ Libro Diario: Formato Profesional")
-st.markdown("Columnas: **Fecha | Cuenta | Descripción Cuenta | Leyenda | Debe | Haber**")
+st.markdown("Estado: **Forzando visibilidad de Descripción de Cuenta.**")
 
 archivo = st.file_uploader("Sube tu Libro Mayor (Excel)", type=["xlsx", "xls"])
 
@@ -16,14 +16,14 @@ if archivo:
         
         cols = df.columns.tolist()
         
-        # Mapeo ultra-reforzado
+        # Mapeo ultra-flexible para encontrar los nombres de las cuentas
         mapeo = {
             'fecha': ['Fecha', 'Fec.', 'Fecha_Asiento', 'Date', 'FECHA', 'F. Contable', 'Fecha Contable'],
             'asiento': ['Asiento', 'Num_Asiento', 'Poliza', 'Nro', 'ASIENTO', 'Asiento Nro', 'Número', 'Comprobante'],
             'cuenta': ['Cuenta', 'Código', 'Cod_Cuenta', 'Cta', 'CUENTA', 'Cod. Cuenta', 'Codigo'],
-            'desc_cuenta': ['Nombre Cuenta', 'Descripción Cuenta', 'Nombre_Cuenta', 'DESCRIPCION CUENTA', 'Cuenta Nombre', 'Nombre de la Cuenta', 'Descripcion Cuenta'],
+            'desc_cuenta': ['Nombre Cuenta', 'Descripción Cuenta', 'Nombre_Cuenta', 'DESCRIPCION CUENTA', 'Cuenta Nombre', 'Nombre de la Cuenta', 'Descripcion Cuenta', 'DESCRIPCION'],
             'comprobante': ['Comprobante', 'Nro Comprobante', 'Comp.', 'Voucher', 'Nro. Comp.'],
-            'concepto': ['Concepto de pase', 'Descripcion', 'Detalle', 'Concepto', 'DESCRIPCION', 'Glosa'],
+            'concepto': ['Concepto de pase', 'Descripcion', 'Detalle', 'Concepto', 'Glosa', 'Concepto Pase'],
             'debe': ['Débitos', 'Debe', 'Débito', 'Cargo', 'DEBE', 'Debito'],
             'haber': ['Créditos', 'Haber', 'Crédito', 'Abono', 'HABER', 'Credito']
         }
@@ -33,7 +33,7 @@ if archivo:
                 if s in reales: return s
             return None
 
-        # Identificación de columnas
+        # Identificación de columnas reales
         c_fecha = detectar(mapeo['fecha'], cols)
         c_asiento = detectar(mapeo['asiento'], cols)
         c_cta = detectar(mapeo['cuenta'], cols)
@@ -49,7 +49,7 @@ if archivo:
             df = df.dropna(subset=[c_fecha])
             df_ordenado = df.sort_values(by=[c_fecha, c_asiento])
 
-            # 2. Leyenda Fusionada
+            # 2. Leyenda Fusionada (Concepto + Comprobante)
             def armar_leyenda(row):
                 base = str(row[c_conc]) if c_conc and pd.notna(row[c_conc]) else ""
                 extra = str(row[c_comp]) if c_comp and pd.notna(row[c_comp]) else ""
@@ -57,7 +57,7 @@ if archivo:
 
             df_ordenado['Leyenda'] = df_ordenado.apply(armar_leyenda, axis=1)
 
-            # 3. Formato Numérico (Debe/Haber)
+            # 3. Formato Numérico
             for col_orig, nombre_final in zip([c_debe, c_haber], ['Debe', 'Haber']):
                 if col_orig:
                     df_ordenado[nombre_final] = df_ordenado[col_orig].astype(str).str.replace(',', '.')
@@ -65,69 +65,34 @@ if archivo:
                 else:
                     df_ordenado[nombre_final] = 0.0
 
-            # 4. Preparar Columnas Finales (Asegurando la Descripción de Cuenta)
-            final_cta = c_cta if c_cta else "Cuenta"
-            final_desc_cta = c_desc_cta if c_desc_cta else "Descripción Cuenta"
+            # 4. Asegurar Nombres de Cuenta (Si no se detectó, usamos un Plan B)
+            nombre_col_desc = c_desc_cta if c_desc_cta else "Descripción Cuenta"
+            if not c_desc_cta:
+                # Si no encontramos la columna, intentamos buscar alguna que tenga texto y no sea de las ya usadas
+                posibles = [c for c in cols if c not in [c_fecha, c_asiento, c_debe, c_haber, c_cta, c_comp, c_conc]]
+                if posibles:
+                    nombre_col_desc = posibles[0] # Tomamos la primera columna de texto disponible
             
-            if not c_cta: df_ordenado[final_cta] = ""
-            if not c_desc_cta: df_ordenado[final_desc_cta] = ""
+            # 5. Seleccionamos columnas finales
+            final_cta_code = c_cta if c_cta else "Código"
+            if not c_cta: df_ordenado[final_cta_code] = ""
 
-            columnas_finales = [c_fecha, final_cta, final_desc_cta, 'Leyenda', 'Debe', 'Haber']
+            columnas_finales = [c_fecha, final_cta_code, nombre_col_desc, 'Leyenda', 'Debe', 'Haber']
             df_final = df_ordenado[columnas_finales].copy()
             
-            # 5. Estética: Limpiar repetidos por asiento (EXCEPTO la cuenta)
+            # Renombramos para que el Excel salga con el nombre correcto
+            df_final = df_final.rename(columns={nombre_col_desc: 'Descripción Cuenta'})
+
+            # 6. Limpieza Estética (SOLO Fecha y Leyenda)
             df_final[c_fecha] = df_final[c_fecha].dt.strftime('%d/%m/%Y')
             duplicados = df_ordenado[c_asiento].duplicated()
             
-            # Solo vaciamos Fecha y Leyenda en las filas repetidas
+            # IMPORTANTE: Aquí NO incluimos 'Descripción Cuenta' para que no salga en blanco
             df_final.loc[duplicados, [c_fecha, 'Leyenda']] = ""
 
-            # 6. Estructura con separadores
+            # 7. Construcción de filas con separador negro
             lista_export = []
             asientos_unicos = df_ordenado[c_asiento].unique()
             fila_separadora = pd.DataFrame([["MARK_BLACK"] * len(df_final.columns)], columns=df_final.columns)
 
             for asiento in asientos_unicos:
-                filas = df_final[df_ordenado[c_asiento] == asiento]
-                lista_export.append(filas)
-                lista_export.append(fila_separadora)
-
-            df_exportar = pd.concat(lista_export, ignore_index=True)
-
-            # 7. Excel con XlsxWriter
-            buf = io.BytesIO()
-            with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
-                df_exportar.to_excel(writer, index=False, sheet_name="Libro Diario")
-                workbook  = writer.book
-                worksheet = writer.sheets['Libro Diario']
-                
-                f_miles = workbook.add_format({'num_format': '#,##0.00'})
-                f_negro = workbook.add_format({'bg_color': '#000000'})
-                f_head  = workbook.add_format({'bold': True, 'bg_color': '#EFEFEF', 'border': 1})
-
-                for col_num, value in enumerate(df_exportar.columns.values):
-                    worksheet.write(0, col_num, value, f_head)
-
-                for i, col in enumerate(df_exportar.columns):
-                    longitudes = [len(str(val)) for val in df_exportar[col].values]
-                    max_len = max(longitudes + [len(str(col))]) + 2
-                    if col in ['Debe', 'Haber']:
-                        worksheet.set_column(i, i, max_len, f_miles)
-                    else:
-                        worksheet.set_column(i, i, min(max_len, 50))
-
-                for row_num in range(len(df_exportar)):
-                    if df_exportar.iloc[row_num, 0] == "MARK_BLACK":
-                        worksheet.set_row(row_num + 1, 2, f_negro)
-                        for c_idx in range(len(df_exportar.columns)):
-                            worksheet.write(row_num + 1, c_idx, "", f_negro)
-
-            st.success("✅ ¡Libro Diario completo! La descripción de cuenta está incluida.")
-            st.download_button(label="📥 Descargar Libro Diario", data=buf.getvalue(), file_name="Libro_Diario_Completo.xlsx")
-            
-        else:
-            st.error("❌ Faltan columnas vitales.")
-            st.write("Detectadas:", cols)
-
-    except Exception as e:
-        st.error(f"Error: {e}")
