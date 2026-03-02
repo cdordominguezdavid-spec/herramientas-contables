@@ -147,4 +147,7 @@ if archivo:
 
     if st.session_state.paso == 'listo':
         st.success("✅ Generado: Texto en dos renglones, sin ceros y numeración de página corregida.")
-        st.download_button("📥 Descargar Libro Diario", st.session_state.excel_
+        st.download_button("📥 Descargar Libro Diario", st.session_state.excel_final, f"Diario_Final.xlsx")
+        if st.button("🏁 Nuevo"):
+            st.session_state.clear()
+            st.rerun()
