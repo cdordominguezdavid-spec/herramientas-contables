@@ -1,18 +1,12 @@
 import streamlit as st
 import pandas as pd
 import io
-import re
+import time
 
 # Configuración de página
-st.set_page_config(page_title="Motor Contable Pro - Vertical Optimizado", layout="wide")
+st.set_page_config(page_title="Motor Contable Pro", layout="wide")
 
-st.title("⚖️ Libro Diario: Formato Vertical de Máxima Densidad")
-
-# --- FUNCIONES DE APOYO ---
-def validar_periodo(texto):
-    patron = r"^(\d{2})/(\d{2})/(\d{4})\s*-\s*(\d{2})/(\d{2})/(\d{4})$"
-    match = re.match(patron, texto)
-    return (True, "") if match else (False, "Formato: dd/mm/aaaa - dd/mm/aaaa")
+st.title("⚖️ Libro Diario: Optimización con Título Lateral")
 
 # --- ESTADOS DE SESIÓN ---
 if 'paso' not in st.session_state:
@@ -20,7 +14,6 @@ if 'paso' not in st.session_state:
 if 'excel_final' not in st.session_state:
     st.session_state.excel_final = None
 
-# --- INTERFAZ DE USUARIO ---
 archivo = st.file_uploader("1. Sube tu Libro Mayor (Excel)", type=["xlsx", "xls"])
 
 if archivo:
@@ -30,114 +23,116 @@ if archivo:
         empresa = st.text_input("Empresa:", placeholder="Ej: Mi Empresa S.A.")
     with col2:
         periodo = st.text_input("Período:", placeholder="01/01/2026 - 31/01/2026")
-    
+
     if st.session_state.paso == 'configuracion':
-        if st.button("🚀 Generar Diario Compacto (Vertical)", disabled=not (empresa and periodo)):
+        if st.button("🚀 Lanzar Generación", disabled=not (empresa and periodo)):
             st.session_state.paso = 'procesando'
             st.rerun()
 
     elif st.session_state.paso == 'procesando':
+        # --- CONTENEDORES PARA LA BARRA DE PROGRESO ---
+        progreso_container = st.empty()
+        status_text = st.empty()
+        bar = progreso_container.progress(0)
+        
         try:
-            df = pd.read_excel(archivo)
-            df = df.dropna(how='all')
+            status_text.text("Leyendo archivo...")
+            df = pd.read_excel(archivo).dropna(how='all')
             
-            # Columnas origen
+            # Columnas origen (Ajustar nombres según tu Excel)
             c_fecha, c_cta, c_desc_cta, c_comp, c_conc, c_debe_orig, c_haber_orig = \
                 "Fecha", "Cuenta", "Descripción cuenta", "Comprobante", "Concepto pase", "Débitos", "Créditos"
 
             df[c_fecha] = pd.to_datetime(df[c_fecha], errors='coerce').ffill()
             df = df.dropna(subset=[c_fecha])
-            
-            # Unificar concepto para ahorrar espacio vertical
-            df['Leyenda_Full'] = df.apply(lambda r: f"{str(r[c_conc]) if pd.notna(r[c_conc]) else ''} {str(r[c_comp]) if pd.notna(r[c_comp]) else ''}".strip(), axis=1)
+            df['Leyenda_Full'] = df.apply(lambda r: f"{str(r[c_conc])} {str(r[c_comp])}".strip(), axis=1)
             
             for col_orig, nombre_nuevo in zip([c_debe_orig, c_haber_orig], ['Debe', 'Haber']):
                 df[nombre_nuevo] = pd.to_numeric(df[col_orig].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
 
-            df['Fecha_Aux'] = df[c_fecha].dt.strftime('%d/%m/%Y')
-            df['Bloque'] = (df['Fecha_Aux'] + df['Leyenda_Full']).ne((df['Fecha_Aux'] + df['Leyenda_Full']).shift()).cumsum()
+            # Agrupación
+            df['Bloque'] = (df[c_fecha].dt.strftime('%d%m%Y') + df['Leyenda_Full']).ne((df[c_fecha].dt.strftime('%d%m%Y') + df['Leyenda_Full']).shift()).cumsum()
             
             lista_final = []
             bloques = df['Bloque'].unique()
-            
+            total_b = len(bloques)
+            texto_lateral = f"DIARIO GENERAL - {empresa} - {periodo}"
+
+            # --- BUCLE CON BARRA DE PROGRESO ---
             for i, b in enumerate(bloques, 1):
+                # Actualizar barra
+                porcentaje = i / total_b
+                bar.progress(porcentaje)
+                status_text.text(f"Estructurando asiento {i} de {total_b}...")
+                
                 sub_df = df[df['Bloque'] == b].copy()
                 n_filas = len(sub_df)
                 
                 df_bloque = pd.DataFrame({
-                    'Fecha': [sub_df.iloc[0][c_fecha].strftime('%d/%m/%y')] + [""] * (n_filas - 1),
+                    'TITULO LATERAL': [texto_lateral] + [""] * (n_filas - 1),
+                    'FECHA': [sub_df.iloc[0][c_fecha].strftime('%d/%m/%y')] + [""] * (n_filas - 1),
                     'Nº': [f"{i}"] + [""] * (n_filas - 1),
-                    'Detalle/Leyenda': [sub_df.iloc[0]['Leyenda_Full']] + [""] * (n_filas - 1),
-                    'Cta': sub_df[c_cta].astype(str).values,
-                    'Descripción Cuenta': sub_df[c_desc_cta].values,
-                    'Debe': sub_df['Debe'].values,
-                    'Haber': sub_df['Haber'].values
+                    'DETALLE': [sub_df.iloc[0]['Leyenda_Full']] + [""] * (n_filas - 1),
+                    'CTA': sub_df[c_cta].astype(str).values,
+                    'DESCRIPCIÓN': sub_df[c_desc_cta].str.slice(0, 30).values,
+                    'DEBE': sub_df['Debe'].values,
+                    'HABER': sub_df['Haber'].values
                 })
                 lista_final.append(df_bloque)
-                # Separador minúsculo (solo una línea inferior)
-                lista_final.append(pd.DataFrame([["SEP"] * 7], columns=df_bloque.columns))
+                # Separador sutil
+                lista_final.append(pd.DataFrame([["SEP"] * 8], columns=df_bloque.columns))
 
             df_to_excel = pd.concat(lista_final, ignore_index=True)
 
+            status_text.text("Finalizando formato de Excel...")
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
                 df_to_excel.to_excel(writer, index=False, sheet_name="Diario")
                 workbook, worksheet = writer.book, writer.sheets['Diario']
                 
-                # --- FORMATOS DE MICRO-IMPRESIÓN ---
-                f_base = {'font_name': 'Arial Narrow', 'font_size': 8}
-                f_num = workbook.add_format({**f_base, 'num_format': '#,##0.00;[Red]-#,##0.00;""', 'valign': 'top'})
-                f_txt = workbook.add_format({**f_base, 'text_wrap': True, 'valign': 'top'})
-                f_head = workbook.add_format({'bold': True, 'font_size': 8, 'bg_color': '#E0E0E0', 'border': 1, 'align': 'center'})
-                f_sep = workbook.add_format({'bottom': 1, 'bottom_color': '#333333'})
+                # Formatos
+                f_lomo = workbook.add_format({'rotation': 90, 'align': 'center', 'valign': 'vcenter', 'font_name': 'Arial Narrow', 'font_size': 7, 'bold': True, 'bg_color': '#D9D9D9'})
+                f_base = {'font_name': 'Arial Narrow', 'font_size': 7.5, 'valign': 'top'}
+                f_num = workbook.add_format({**f_base, 'num_format': '#,##0.00;[Red]-#,##0.00;""'})
+                f_txt = workbook.add_format({**f_base, 'text_wrap': True})
+                f_head = workbook.add_format({'bold': True, 'font_size': 7.5, 'bg_color': '#F2F2F2', 'border': 1, 'align': 'center'})
+                f_sep = workbook.add_format({'bottom': 1, 'bottom_color': '#AAAAAA'})
 
-                # Configuración Vertical (Portrait) para ahorrar hojas
+                # Configuración de página
                 worksheet.set_portrait()
-                worksheet.set_paper(9) # A4
-                worksheet.set_margins(left=0.5, right=0.2, top=0.5, bottom=0.4)
-                worksheet.fit_to_pages(1, 0) # Forzar ancho a 1 página
+                worksheet.set_margins(left=0.2, right=0.2, top=0.3, bottom=0.3)
+                worksheet.repeat_columns(0, 0) # Repite el título lateral en cada hoja
+                worksheet.fit_to_pages(1, 0)
 
-                # --- ENCABEZADO CORREGIDO (Sin superposición) ---
-                # Agrupamos todo a la izquierda para que no choque con nada a la derecha
-                info_line = f"&L&8EMPRESA: {empresa} | PERÍODO: {periodo}\nDIARIO GENERAL&R&8Página &P de &N"
-                worksheet.set_header(info_line)
+                # Anchos (Columna 0 es el lomo lateral)
+                worksheet.set_column(0, 0, 2.5, f_lomo) 
+                worksheet.set_column(1, 1, 7, f_txt)
+                worksheet.set_column(2, 2, 3, f_txt)
+                worksheet.set_column(3, 3, 22, f_txt)
+                worksheet.set_column(4, 4, 7, f_txt)
+                worksheet.set_column(5, 5, 22, f_txt)
+                worksheet.set_column(6, 7, 10, f_num)
 
-                # Anchos de columna optimizados para Vertical A4
-                worksheet.set_column(0, 0, 7.5, f_txt) # Fecha
-                worksheet.set_column(1, 1, 3.5, f_txt) # Nº
-                worksheet.set_column(2, 2, 22, f_txt)  # Detalle
-                worksheet.set_column(3, 3, 7, f_txt)   # Cta
-                worksheet.set_column(4, 4, 22, f_txt)  # Descripción
-                worksheet.set_column(5, 6, 11, f_num)  # Importes
-
-                # Dibujar filas y separadores
                 for row_num, row_data in enumerate(df_to_excel.values, 1):
                     if "SEP" in row_data:
-                        worksheet.set_row(row_num, 1, f_sep) # Fila casi invisible pero con línea
-                        for c in range(7): worksheet.write(row_num, c, "", f_sep)
+                        worksheet.set_row(row_num, 0.5, f_sep)
                     else:
-                        worksheet.set_row(row_num, 10.5) # Altura reducida para ganar espacio
+                        worksheet.set_row(row_num, 9.5)
 
-                # Re-escribir encabezados
                 for col_num, value in enumerate(df_to_excel.columns.values):
                     worksheet.write(0, col_num, value, f_head)
 
             st.session_state.excel_final = buf.getvalue()
             st.session_state.paso = 'listo'
             st.rerun()
-            
+
         except Exception as e:
             st.error(f"Error: {e}")
             st.session_state.paso = 'configuracion'
 
     if st.session_state.paso == 'listo':
-        st.success("✅ ¡Hecho! Formato vertical optimizado para ahorro de papel.")
-        st.download_button(
-            label="📥 Descargar Libro Diario Final",
-            data=st.session_state.excel_final,
-            file_name=f"Diario_Compacto_{empresa.replace(' ', '_')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-        if st.button("🏁 Cargar otro archivo"):
+        st.success("✅ ¡Procesado con éxito!")
+        st.download_button("📥 Descargar Libro Diario", st.session_state.excel_final, f"Diario_{empresa}.xlsx")
+        if st.button("🏁 Reiniciar"):
             st.session_state.clear()
             st.rerun()
