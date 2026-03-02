@@ -3,18 +3,20 @@ import pandas as pd
 import io
 import re
 
-st.set_page_config(page_title="Motor Contable V3 - PDF Pro", layout="wide")
+st.set_page_config(page_title="Generador de Libro Diario", layout="wide")
 
-st.title("⚖️ Libro Diario: Generación Dual (Excel + PDF Oficial)")
+st.title("⚖️ Libro Diario: Formato Excel Oficial")
 
 if 'paso' not in st.session_state:
     st.session_state.paso = 'configuracion'
+if 'excel_final' not in st.session_state:
+    st.session_state.excel_final = None
 
 def validar_periodo(texto):
     patron = r"^(\d{2})/(\d{2})/(\d{4})\s*-\s*(\d{2})/(\d{2})/(\d{4})$"
     return (True, "") if re.match(patron, texto) else (False, "Formato: dd/mm/aaaa - dd/mm/aaaa")
 
-archivo = st.file_uploader("1. Sube tu Libro Mayor", type=["xlsx", "xls"])
+archivo = st.file_uploader("Sube tu Libro Mayor (Excel)", type=["xlsx", "xls"])
 
 if archivo:
     st.markdown("---")
@@ -22,7 +24,7 @@ if archivo:
     with col1:
         empresa = st.text_input("Empresa:", disabled=(st.session_state.paso != 'configuracion'))
     with col2:
-        periodo = st.text_input("Período:", placeholder="01/01/2026 - 31/12/2026", disabled=(st.session_state.paso != 'configuracion'))
+        periodo = st.text_input("Período:", placeholder="01/01/2026 - 31/01/2026", disabled=(st.session_state.paso != 'configuracion'))
     
     periodo_ok = False
     if periodo:
@@ -31,134 +33,109 @@ if archivo:
         else: periodo_ok = True
 
     if st.session_state.paso == 'configuracion':
-        if st.button("🚀 Lanzar Generación (Excel + PDF)", disabled=not (empresa and periodo_ok)):
+        if st.button("🚀 Generar Libro Diario", disabled=not (empresa and periodo_ok)):
             st.session_state.paso = 'procesando'
             st.rerun()
 
     elif st.session_state.paso == 'procesando':
-        st.button("⏳ Procesando a máxima velocidad...", disabled=True)
+        st.button("⏳ Procesando...", disabled=True)
         
         try:
-            # 1. Lectura robusta
+            # 1. Lectura
             df = pd.read_excel(archivo).astype(object) 
             c_fec, c_cta, c_des, c_com, c_con, c_deb, c_cre = "Fecha", "Cuenta", "Descripción cuenta", "Comprobante", "Concepto pase", "Débitos", "Créditos"
             
-            # 2. Limpieza
+            # 2. Limpieza de datos
             df[c_fec] = pd.to_datetime(df[c_fec], errors='coerce').ffill()
             df = df.dropna(subset=[c_fec])
             df[c_con] = df[c_con].fillna("").astype(str)
             df[c_com] = df[c_com].fillna("").astype(str)
-            df['Ley_F'] = df[c_con] + " " + df[c_com]
+            df['Ley_F'] = (df[c_con] + " " + df[c_com]).str.strip()
             for c in [c_deb, c_cre]:
                 df[c] = pd.to_numeric(df[c].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
 
-            # 3. Identificar Asientos
+            # 3. Identificar Bloques (Asientos)
             df['ID'] = (df[c_fec].dt.strftime('%Y%m%d') + df['Ley_F']).ne((df[c_fec].dt.strftime('%Y%m%d') + df['Ley_F']).shift()).cumsum()
             
-            # 4. Estructura de Reporte
-            mask = df.duplicated(subset=['ID'])
-            asiento_nums = {id_as: f"{i+1:03d}" for i, id_as in enumerate(df['ID'].unique())}
+            # Preparar lista para exportar
+            lista_final = []
+            asientos_indices = []
+            curr_row = 1
+            bloques = df['ID'].unique()
             
-            # Creamos el HTML con estilo de impresión
-            html_rows = ""
-            for i, row in df.iterrows():
-                es_inicio = not mask[i]
-                # Estilo para línea divisoria entre asientos
-                row_style = "border-top: 1.5pt solid black;" if es_inicio and i > 0 else ""
+            prog = st.progress(0)
+            for i, b in enumerate(bloques, 1):
+                prog.progress(i/len(bloques))
+                sub = df[df['ID'] == b].copy()
+                n = len(sub)
                 
-                f_val = row[c_fec].strftime('%d/%m/%y') if es_inicio else ""
-                n_val = asiento_nums[row['ID']] if es_inicio else ""
-                l_val = row['Ley_F'] if es_inicio else ""
-                d_val = f"{row[c_deb]:,.2f}" if row[c_deb] > 0 else ""
-                h_val = f"{row[c_cre]:,.2f}" if row[c_cre] > 0 else ""
+                bloque_export = pd.DataFrame({
+                    'Fecha': [sub.iloc[0][c_fec].strftime('%d/%m/%y')] + [""]*(n-1),
+                    'NRO.': [f"{i:03d}"] + [""]*(n-1),
+                    'Leyenda': [sub.iloc[0]['Ley_F']] + [""]*(n-1),
+                    'Cuenta': sub[c_cta].values,
+                    'Descripción': sub[c_des].values,
+                    'Debe': sub[c_deb].values,
+                    'Haber': sub[c_cre].values
+                })
                 
-                html_rows += f"""
-                <tr style="{row_style}">
-                    <td style="font-weight:{'bold' if es_inicio else 'normal'}">{f_val}</td>
-                    <td>{n_val}</td>
-                    <td class="text-wrap">{l_val}</td>
-                    <td>{row[c_cta]}</td>
-                    <td class="text-wrap">{row[c_des]}</td>
-                    <td class="num">{d_val}</td>
-                    <td class="num">{h_val}</td>
-                </tr>"""
+                asientos_indices.append({'start': curr_row, 'end': curr_row + n - 1, 'len': n})
+                lista_final.append(bloque_export)
+                lista_final.append(pd.DataFrame([["SEP"]*7], columns=bloque_export.columns))
+                curr_row += n + 1
 
-            # --- CSS DE IMPRESIÓN PROFESIONAL ---
-            full_html = f"""
-            <html><head><style>
-                @media print {{
-                    @page {{ size: A4 portrait; margin: 1cm; }}
-                    thead {{ display: table-header-group; }} /* Repite cabecera en cada hoja */
-                    tfoot {{ display: table-footer-group; }}
-                }}
-                body {{ font-family: Arial, sans-serif; font-size: 7.5pt; line-height: 1.2; }}
-                table {{ width: 100%; border-collapse: collapse; table-layout: fixed; }}
-                th {{ border: 1pt solid black; background: #f0f0f0; padding: 4px; font-size: 8pt; }}
-                td {{ border: 0.1pt solid #ddd; padding: 2px 4px; vertical-align: top; word-wrap: break-word; }}
-                .num {{ text-align: right; white-space: nowrap; }}
-                .text-wrap {{ overflow: hidden; text-overflow: ellipsis; }}
-                .header-table {{ width: 100%; margin-bottom: 10px; border: none; }}
-                .header-table td {{ border: none; font-size: 10pt; font-weight: bold; }}
-            </style></head><body>
-                <table class="header-table">
-                    <tr><td>{empresa} - {periodo}</td><td style="text-align:right">DIARIO GENERAL</td></tr>
-                </table>
-                <table>
-                    <thead>
-                        <tr>
-                            <th style="width:10%">Fecha</th>
-                            <th style="width:6%">Nro</th>
-                            <th style="width:25%">Leyenda</th>
-                            <th style="width:9%">Cuenta</th>
-                            <th style="width:26%">Descripción</th>
-                            <th style="width:12%">Debe</th>
-                            <th style="width:12%">Haber</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {html_rows}
-                    </tbody>
-                </table>
-            </body></html>"""
+            df_total = pd.concat(lista_final, ignore_index=True)
 
-            # --- EXCEL (Mismo formato rápido) ---
-            buf_ex = io.BytesIO()
-            with pd.ExcelWriter(buf_ex, engine='xlsxwriter') as writer:
-                # Limpieza rápida para Excel
-                df_ex = df.copy()
-                df_ex.loc[mask, [c_fec, 'Ley_F']] = ""
-                df_ex['NRO'] = df_ex['ID'].map(asiento_nums)
-                df_ex.loc[mask, 'NRO'] = ""
-                df_ex = df_ex[[c_fec, 'NRO', 'Ley_F', c_cta, c_des, c_deb, c_cre]]
-                df_ex.columns = ['Fecha', 'NRO.', 'Leyenda', 'Cuenta', 'Descripción', 'Debe', 'Haber']
+            # --- GENERAR EXCEL ---
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+                df_total.to_excel(writer, index=False, sheet_name="Libro Diario")
+                wb, ws = writer.book, writer.sheets['Libro Diario']
                 
-                df_ex.to_excel(writer, index=False, sheet_name="Diario")
-                wb, ws = writer.book, writer.sheets['Diario']
-                f_base = wb.add_format({'font_name': 'Arial', 'font_size': 7.5})
-                f_num = wb.add_format({'font_name': 'Arial', 'font_size': 7.5, 'num_format': '#,##0.00;;'})
-                ws.set_column(0,1,8,f_base); ws.set_column(2,2,30,f_base)
-                ws.set_column(3,3,8,f_base); ws.set_column(4,4,30,f_base); ws.set_column(5,6,12,f_num)
+                # Formatos de ahorro de espacio
+                f_base = wb.add_format({'font_name': 'Arial', 'font_size': 7.5, 'valign': 'top'})
+                f_num  = wb.add_format({'font_name': 'Arial', 'font_size': 7.5, 'num_format': '#,##0.00;;', 'valign': 'top'})
+                f_mrg  = wb.add_format({'font_name': 'Arial', 'font_size': 7.5, 'valign': 'top', 'align': 'left', 'text_wrap': True})
+                f_sep  = wb.add_format({'bg_color': '#000000'})
+                f_hdr  = wb.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'font_size': 8})
 
-            st.session_state.excel_ready = buf_ex.getvalue()
-            st.session_state.html_ready = full_html
+                # Configuración A4 profesional
+                ws.set_paper(9) # A4
+                ws.set_margins(0.3, 0.3, 0.4, 0.4) # 1cm aprox
+                ws.fit_to_pages(1, 0)
+                ws.set_header(f"&L&B{empresa} - {periodo}&R&BDIARIO GENERAL")
+                ws.set_footer("&RPágina &P de &N")
+                ws.repeat_rows(0) # Repetir cabecera en cada hoja
+
+                ws.set_column(0,0,8,f_base); ws.set_column(1,1,4,f_base); ws.set_column(2,2,28,f_base)
+                ws.set_column(3,3,7,f_base); ws.set_column(4,4,28,f_base); ws.set_column(5,6,11,f_num)
+
+                # Aplicar Merges y Líneas Separadoras
+                for item in asientos_info_temp := asientos_indices:
+                    if item['len'] >= 2:
+                        s = item['start']
+                        ws.merge_range(s, 0, s+1, 0, df_total.iloc[s-1]['Fecha'], f_mrg)
+                        ws.merge_range(s, 1, s+1, 1, df_total.iloc[s-1]['NRO.'], f_mrg)
+                        ws.merge_range(s, 2, s+1, 2, df_total.iloc[s-1]['Leyenda'], f_mrg)
+                    
+                    row_sep = item['end'] + 1
+                    ws.set_row(row_sep, 1.2, f_sep)
+                    for c in range(7): ws.write(row_sep, c, "", f_sep)
+
+                for c_idx, val in enumerate(df_total.columns): ws.write(0, c_idx, val, f_hdr)
+
+            st.session_state.excel_final = buf.getvalue()
             st.session_state.paso = 'listo'
             st.rerun()
 
         except Exception as e:
-            st.error(f"Error: {e}"); st.session_state.paso = 'configuracion'
+            st.error(f"Error: {e}")
+            st.session_state.paso = 'configuracion'
 
 if st.session_state.paso == 'listo':
-    st.success("✅ Generación finalizada.")
-    c1, c2 = st.columns(2)
-    with c1: st.download_button("📥 Excel Contable", st.session_state.excel_ready, "Libro_Diario.xlsx")
-    with c2: 
-        st.download_button("📥 Reporte PDF (Oficial)", st.session_state.html_ready.encode('utf-8'), "Reporte_Diario.html", "text/html")
+    st.success("✅ ¡Libro Diario generado!")
+    st.download_button("📥 Descargar Libro Diario Excel", st.session_state.excel_final, f"Diario_{empresa}.xlsx")
     
-    st.warning("⚠️ **INSTRUCCIÓN IMPORTANTE PARA EL PDF:**")
-    st.write("1. Descarga el archivo **Reporte_Diario.html** y ábrelo en Chrome o Edge.")
-    st.write("2. Presiona **Ctrl + P** (Imprimir).")
-    st.write("3. En 'Destino', selecciona **Guardar como PDF**.")
-    st.write("4. En 'Más opciones', asegúrate que **Gráficos de fondo** esté activado si quieres ver las líneas.")
-
-    if st.button("🏁 Nuevo Reporte"):
-        st.session_state.clear(); st.rerun()
+    if st.button("🏁 Reiniciar"):
+        st.session_state.clear()
+        st.rerun()
