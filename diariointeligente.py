@@ -38,7 +38,9 @@ if archivo:
 
             df[c_fecha] = pd.to_datetime(df[c_fecha], errors='coerce').ffill()
             df = df.dropna(subset=[c_fecha])
-            df['Leyenda_Full'] = df.apply(lambda r: f"{str(r[c_conc])} {str(r[c_comp])}".strip(), axis=1)
+            
+            # CONCATENADO CON SALTO DE LÍNEA (Si el texto es largo, Excel hará el resto)
+            df['Leyenda_Full'] = df.apply(lambda r: f"{str(r[c_conc])} \n{str(r[c_comp])}".strip(), axis=1)
             
             for col, new in zip([c_debe_orig, c_haber_orig], ['Debe', 'Haber']):
                 df[new] = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
@@ -47,8 +49,6 @@ if archivo:
             df['Bloque'] = (df[c_fecha].dt.strftime('%d%m%Y') + df['Leyenda_Full']).ne((df[c_fecha].dt.strftime('%d%m%Y') + df['Leyenda_Full']).shift()).cumsum()
             
             lista_final = []
-            asientos_indices = []
-            current_row = 1
             bloques = df['Bloque'].unique()
             total_b = len(bloques)
             texto_lateral = f"DIARIO GENERAL - {empresa.upper()} - {periodo.upper()}"
@@ -59,20 +59,18 @@ if archivo:
                 n = len(sub_df)
                 
                 df_bloque = pd.DataFrame({
-                    'LOMO': [""] * n, # Celda vacía para ser combinada después
+                    ' ': [""] * n, # Espacio reservado para el lomo lateral
                     'FECHA': [sub_df.iloc[0][c_fecha].strftime('%d/%m/%y')] + [""] * (n - 1),
                     'AS': [f"{i}"] + [""] * (n - 1),
-                    'DETALLE': [sub_df.iloc[0]['Leyenda_Full']] + [""] * (n - 1),
+                    'DETALLE / COMPROBANTE': [sub_df.iloc[0]['Leyenda_Full']] + [""] * (n - 1),
                     'CTA': sub_df[c_cta].astype(str).values,
-                    'DESCRIPCIÓN': sub_df[c_desc_cta].str.slice(0, 40).values,
+                    'DESCRIPCIÓN': sub_df[c_desc_cta].str.slice(0, 45).values,
                     'DEBE': sub_df['Debe'].values,
                     'HABER': sub_df['Haber'].values
                 })
                 
-                asientos_indices.append((current_row, current_row + n - 1))
                 lista_final.append(df_bloque)
                 lista_final.append(pd.DataFrame([["SEP"] * 8], columns=df_bloque.columns))
-                current_row += n + 1
 
             df_to_excel = pd.concat(lista_final, ignore_index=True)
 
@@ -82,46 +80,59 @@ if archivo:
                 workbook, worksheet = writer.book, writer.sheets['Diario']
                 
                 # --- FORMATOS ---
-                # Formato lomo: Texto centrado verticalmente y rotado
-                f_lomo = workbook.add_format({
-                    'rotation': 90, 'align': 'center', 'valign': 'vcenter', 
-                    'font_name': 'Arial Narrow', 'font_size': 8, 'bold': True
-                })
-                # Formato números: SI ES CERO, NO MUESTRA NADA (;;"" al final)
                 f_num = workbook.add_format({
-                    'font_name': 'Arial Narrow', 'font_size': 8, 
+                    'font_name': 'Arial Narrow', 'font_size': 8.5, 
                     'num_format': '#,##0.00;;""', 'valign': 'top'
                 })
-                f_base = workbook.add_format({'font_name': 'Arial Narrow', 'font_size': 8, 'valign': 'top', 'text_wrap': True})
-                f_head = workbook.add_format({'bold': True, 'font_size': 8, 'border': 1, 'align': 'center', 'bg_color': '#FFFFFF'})
-                f_sep = workbook.add_format({'top': 1, 'top_color': '#333333'})
+                # Detalle con Wrap Text para que se vea en dos renglones si es necesario
+                f_wrap = workbook.add_format({
+                    'font_name': 'Arial Narrow', 'font_size': 8.5, 
+                    'valign': 'top', 'text_wrap': True
+                })
+                f_head = workbook.add_format({
+                    'bold': True, 'font_size': 9, 'border': 1, 
+                    'align': 'center', 'bg_color': '#FFFFFF'
+                })
+                f_sep = workbook.add_format({'top': 1, 'top_color': '#000000'})
 
                 # --- CONFIGURACIÓN DE IMPRESIÓN ---
                 worksheet.set_portrait()
                 worksheet.set_paper(9) # A4
-                worksheet.set_margins(0.3, 0.2, 0.5, 0.5)
-                worksheet.repeat_rows(0) # Repite encabezado en cada hoja
-                worksheet.set_header(f'&L&8{empresa} - {periodo}&R&8Página &P de &N')
+                worksheet.set_margins(left=0.5, right=0.3, top=0.6, bottom=0.5)
+                
+                # Encabezado con Número de Página en todas las hojas
+                worksheet.set_header(f'&L&10&B{empresa}&R&10Página &P de &N')
+                worksheet.repeat_rows(0) # Repetir títulos de columna
                 worksheet.fit_to_pages(1, 0)
 
                 # Anchos
-                worksheet.set_column(0, 0, 3.5, f_lomo) # Columna del Lomo
-                worksheet.set_column(1, 1, 8, f_base)  # Fecha
-                worksheet.set_column(2, 2, 4, f_base)  # AS
-                worksheet.set_column(3, 3, 24, f_base) # Detalle
-                worksheet.set_column(4, 4, 8, f_base)  # CTA
-                worksheet.set_column(5, 5, 24, f_base) # Descripción
-                worksheet.set_column(6, 7, 11, f_num)  # Debe/Haber (con ceros ocultos)
+                worksheet.set_column(0, 0, 4)           # Espacio para Lomo (Textbox)
+                worksheet.set_column(1, 1, 8.5, f_wrap) # Fecha
+                worksheet.set_column(2, 2, 4.5, f_wrap) # Asiento
+                worksheet.set_column(3, 3, 28, f_wrap)  # Detalle (Dos renglones)
+                worksheet.set_column(4, 4, 8, f_wrap)   # Cuenta
+                worksheet.set_column(5, 5, 28, f_wrap)  # Descripción
+                worksheet.set_column(6, 7, 13, f_num)   # Importes
 
-                # Aplicar Merges de lomo y estilos de fila
-                for start, end in asientos_indices:
-                    worksheet.merge_range(start, 0, end, 0, texto_lateral, f_lomo)
+                # --- EL TRUCO INTELIGENTE: CUADRO DE TEXTO ROTADO ---
+                # Esto no se corta entre páginas porque Excel lo trata como objeto de dibujo
+                worksheet.insert_textbox(1, 0, texto_lateral, {
+                    'width': 35,
+                    'height': 1200, # Altura grande para cubrir varias páginas o ajustarse
+                    'font': {'name': 'Arial Narrow', 'size': 9, 'bold': True},
+                    'align': {'vertical': 'middle', 'horizontal': 'center'},
+                    'gradient': {'fill': False},
+                    'line': {'none': True},
+                    'text_rotation': 90
+                })
 
+                # Ajuste de filas dinámico
                 for row_num, row_data in enumerate(df_to_excel.values, 1):
                     if "SEP" in row_data:
-                        worksheet.set_row(row_num, 1, f_sep)
+                        worksheet.set_row(row_num, 1.5, f_sep)
                     else:
-                        worksheet.set_row(row_num, 11.5)
+                        # Altura automática para permitir el wrap del texto (2do renglón)
+                        worksheet.set_row(row_num, None) 
 
                 for col_num, value in enumerate(df_to_excel.columns.values):
                     worksheet.write(0, col_num, value, f_head)
@@ -135,8 +146,5 @@ if archivo:
             st.session_state.paso = 'configuracion'
 
     if st.session_state.paso == 'listo':
-        st.success("✅ Generado: Ceros ocultos, lomo centrado y encabezado por hoja.")
-        st.download_button("📥 Descargar Libro Diario", st.session_state.excel_final, f"Diario_Pro_{empresa}.xlsx")
-        if st.button("🏁 Nuevo"):
-            st.session_state.clear()
-            st.rerun()
+        st.success("✅ Generado: Texto en dos renglones, sin ceros y numeración de página corregida.")
+        st.download_button("📥 Descargar Libro Diario", st.session_state.excel_
